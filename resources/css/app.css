@@ -1,0 +1,31 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../vendor/livewire/livewire/src/Features/SupportPagination/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+@source '../../app/**/*.php';
+
+@theme {
+    --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+
+    /* Option A - forest green */
+    --color-forest-950: #0B2E22;
+    --color-forest-900: #0F3D2E;
+    --color-forest-800: #164C39;
+    --color-forest-700: #1F6F4A;
+    --color-mint-300: #86EFAC;
+    --color-mint-200: #A7D3B9;
+    --color-mint-100: #CFE6D8;
+    --color-canvas: #F3F7F2;
+    --color-line: #E1ECE4;
+    --color-field: #CFE0D4;
+    --color-ink: #0F1F17;
+    --color-ink-soft: #2D4237;
+    --color-muted: #4B5E54;
+}
+
+[x-cloak] {
+    display: none !important;
+}
