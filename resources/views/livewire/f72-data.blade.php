@@ -51,9 +51,9 @@
             <div class="flex flex-wrap items-center gap-2 border-t border-[#EEF3EF] pt-3.5">
                 <span class="mr-1 text-[12.5px] font-semibold text-muted">Download {{ $filter ? implode(' / ', $filter) : 'all areas' }}:</span>
                 <a href="{{ route('f72.export.merged', $filter) }}" class="flex h-9 items-center gap-1.5 rounded-[9px] border border-field px-3 text-[13px] font-bold text-ink-soft hover:border-green-700"><x-icon name="download" size="16" /> Merged F72 CSV</a>
-                <a href="{{ route('f72.export.data', $filter) }}" class="flex h-9 items-center gap-1.5 rounded-[9px] border border-field px-3 text-[13px] font-bold text-ink-soft hover:border-green-700"><x-icon name="download" size="16" /> All tables (ZIP)</a>
+                <a href="{{ route('f72.export.data', $filter) }}" x-on:click="notify({ type: 'info', title: 'Preparing your download', message: 'Large areas can take a minute. The file will download as soon as it is ready - you can keep working.' })" class="flex h-9 items-center gap-1.5 rounded-[9px] border border-field px-3 text-[13px] font-bold text-ink-soft hover:border-green-700"><x-icon name="download" size="16" /> All tables (ZIP)</a>
                 @if ($province !== '')
-                    <a href="{{ route('f72.export.households', $filter) }}" class="flex h-9 items-center gap-1.5 rounded-[9px] border border-field px-3 text-[13px] font-bold text-ink-soft hover:border-green-700"><x-icon name="download" size="16" /> Per barangay & household (ZIP)</a>
+                    <a href="{{ route('f72.export.households', $filter) }}" x-on:click="notify({ type: 'info', title: 'Preparing your download', message: 'Large areas can take a minute. The file will download as soon as it is ready - you can keep working.' })" class="flex h-9 items-center gap-1.5 rounded-[9px] border border-field px-3 text-[13px] font-bold text-ink-soft hover:border-green-700"><x-icon name="download" size="16" /> Per barangay & household (ZIP)</a>
                 @else
                     <span class="text-[12.5px] text-muted">Pick a province for the per-household ZIP.</span>
                 @endif

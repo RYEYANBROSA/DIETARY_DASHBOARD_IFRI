@@ -15,6 +15,7 @@ final class Modules
     public const DASHBOARD = 'dashboard';
     public const F11 = 'f11';
     public const F72 = 'f72';
+    public const SWS = 'sws';
     public const PROFILE = 'profile';
     public const USERS = 'users';
 
@@ -23,6 +24,7 @@ final class Modules
         self::DASHBOARD => ['label' => 'Dashboard', 'short' => 'Dashboard', 'route' => 'dashboard', 'icon' => 'grid'],
         self::F11 => ['label' => 'F11 Encoding & Upload', 'short' => 'F11', 'route' => 'f11', 'icon' => 'upload'],
         self::F72 => ['label' => 'F72 Food Recall', 'short' => 'F72', 'route' => 'f72', 'icon' => 'table'],
+        self::SWS => ['label' => 'SWS Upload Data', 'short' => 'SWS', 'route' => 'sws', 'icon' => 'database'],
         self::PROFILE => ['label' => 'My Profile', 'short' => 'Profile', 'route' => 'profile', 'icon' => 'user'],
         self::USERS => ['label' => 'System Users', 'short' => 'Users', 'route' => 'users', 'icon' => 'users'],
     ];
@@ -44,7 +46,7 @@ final class Modules
     {
         return match ($level) {
             UserLevel::Administrator => self::keys(),
-            UserLevel::Validator => [self::DASHBOARD, self::F11, self::PROFILE],
+            UserLevel::Validator => [self::DASHBOARD, self::F11, self::SWS, self::PROFILE],
             UserLevel::Client => [self::DASHBOARD, self::F72, self::PROFILE],
         };
     }

@@ -267,7 +267,7 @@ class SystemUsers extends Component
         $user->save();
 
         $state = $user->canAccess($module) ? 'on' : 'off';
-        $this->dispatch('toast', message: Modules::label($module) . " turned {$state} for {$user->name}.");
+        $this->dispatch('toast', message: Modules::label($module) . " turned {$state} for {$user->name}.", small: true);
     }
 
     public function render()

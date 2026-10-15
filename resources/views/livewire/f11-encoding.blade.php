@@ -250,13 +250,13 @@
                             runs the check (updatedFile) before it fires upload-finish, so
                             "checking" spans 100% -> finish, and finish always frees the input.
                         --}}
-                        <div class="flex flex-col gap-4 rounded-2xl border border-line bg-white p-6"
+                        <div class="flex flex-col gap-4 rounded-2xl border border-line bg-white p-6" wire:key="upload-form"
                             x-data="{ state: 'idle', progress: 0, name: '', error: '' }"
-                            x-on:livewire-upload-start="state = 'uploading'; progress = 0; error = ''"
-                            x-on:livewire-upload-progress="progress = $event.detail.progress; if (progress >= 100) state = 'checking'"
-                            x-on:livewire-upload-finish="state = 'idle'"
-                            x-on:livewire-upload-error="state = 'failed'; error = 'The file could not be uploaded. It may be larger than {{ $maxMb }} MB, or the connection dropped. Try again with a smaller file.'"
-                            x-on:livewire-upload-cancel="state = 'idle'">
+                            x-on:livewire-upload-start="state = 'uploading'; progress = 0; error = ''; uploadAlert.start(name)"
+                            x-on:livewire-upload-progress="progress = $event.detail.progress; uploadAlert.progress(progress); if (progress >= 100) state = 'checking'"
+                            x-on:livewire-upload-finish="state = 'idle'; uploadAlert.done()"
+                            x-on:livewire-upload-error="state = 'failed'; error = 'The file could not be uploaded. It may be larger than {{ $maxMb }} MB, or the connection dropped. Try again with a smaller file.'; uploadAlert.failed(error)"
+                            x-on:livewire-upload-cancel="state = 'idle'; uploadAlert.done()">
                             <div class="flex flex-wrap items-center justify-between gap-3">
                                 <h2 class="text-lg font-bold">Upload a batch</h2>
                                 <span class="text-[13px] text-muted">CSV from the template, up to {{ $maxMb }} MB / {{ number_format(\App\Support\F11Store::MAX_ROWS) }} rows</span>
@@ -296,7 +296,7 @@
                             @enderror
                         </div>
                     @else
-                        <div class="flex flex-col gap-4 rounded-2xl border border-line bg-white p-6">
+                        <div class="flex flex-col gap-4 rounded-2xl border border-line bg-white p-6" wire:key="upload-result">
                             <div class="flex flex-col gap-1">
                                 <h2 class="text-lg font-bold">Checked: {{ $upload['name'] }}</h2>
                                 <p class="text-[13.5px] text-muted">{{ number_format($upload['rows']) }} row(s) read. Nothing has been saved yet.</p>
@@ -337,8 +337,8 @@
 
                             <div class="flex flex-wrap justify-end gap-2.5">
                                 <button type="button" wire:click="discardUpload" class="h-11 rounded-[11px] border border-field bg-white px-[18px] text-sm font-bold text-ink-soft hover:border-green-700">Choose another file</button>
-                                <button type="button" wire:click="import" wire:loading.attr="disabled" wire:target="import" @disabled(!$upload['valid'])
-                                    wire:confirm="Import {{ $upload['valid'] }} member(s) into F11? {{ $upload['updates'] }} existing record(s) will be overwritten."
+                                <button type="button" wire:loading.attr="disabled" wire:target="import" @disabled(!$upload['valid'])
+                                    x-on:click="confirmAlert({ title: 'Import {{ $upload['valid'] }} member(s) into F11?', text: '{{ $upload['inserts'] }} will be added and {{ $upload['updates'] }} existing record(s) will be overwritten. Each change is kept in its history.', confirmText: 'Import' }).then(ok => ok && $wire.import())"
                                     class="h-11 rounded-[11px] bg-green-700 px-5 text-sm font-bold text-white hover:bg-green-800 disabled:opacity-60">
                                     Import {{ number_format($upload['valid']) }} member(s)
                                 </button>

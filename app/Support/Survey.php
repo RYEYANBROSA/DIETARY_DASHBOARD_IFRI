@@ -203,6 +203,13 @@ final class Survey
                 $t->unique([...self::HOUSEHOLD_KEYS, 'member_no', 'foodrecall_day', 'lane_no'], 'f72_line_unique');
                 $t->index('recipe_id', 'idx_f72_recipe_key');
             },
+            // SWS transmission data: one row per SWS respondent, columns named
+            // after the SWS template's headers (see SwsRecord::COLUMNS), plus
+            // whether each record has been transmitted to the live server
+            'sws_data' => function (Blueprint $t) {
+                self::swsDataColumns($t);
+                self::swsTransmittedColumns($t);
+            },
         ];
 
         foreach ($definitions as $table => $definition) {
@@ -215,9 +222,55 @@ final class Survey
             }
         }
 
+        // Tables made before a column was added get it now
+        if ($schema->hasTable('sws_data') && !$schema->hasColumn('sws_data', 'transmitted')) {
+            $schema->table('sws_data', fn (Blueprint $t) => self::swsTransmittedColumns($t));
+            $created[] = 'sws_data.transmitted';
+        }
+
         self::flush();
 
         return $created;
+    }
+
+    /**
+     * The sws_data columns shared by this database and the live server's
+     * copy (which the field researchers' tablets read).
+     */
+    public static function swsDataColumns(Blueprint $t): void
+    {
+        $t->increments('id');
+        foreach (['city', 'district', 'barangay', 'identifier1', 'identifier2', 'identifier3'] as $c) {
+            $t->string($c, 100)->nullable();
+        }
+        $t->string('sws_member_no', 50)->unique('sws_data_member_unique');
+        foreach (['lastname', 'firstname'] as $c) {
+            $t->string($c, 100)->nullable();
+        }
+        $t->string('suffix', 20)->nullable();
+        $t->string('middlename', 100)->nullable();
+        foreach (['floor_no', 'building_no', 'block'] as $c) {
+            $t->string($c, 50)->nullable();
+        }
+        foreach (['street_name', 'subd'] as $c) {
+            $t->string($c, 150)->nullable();
+        }
+        $t->string('contact_number', 20)->nullable();
+        $t->string('email_address', 150)->nullable();
+        $t->string('latitude', 30)->nullable();
+        $t->string('longitude', 30)->nullable();
+        $t->string('indexwomenname', 150)->nullable();
+        $t->unsignedSmallInteger('idp_age')->nullable();
+        $t->dateTime('created_at')->nullable();
+        $t->dateTime('updated_at')->nullable();
+        $t->index(['city', 'district', 'barangay'], 'sws_data_area_index');
+    }
+
+    /** Local only: yes / no, set by a transmission and reset to no by any later change. */
+    private static function swsTransmittedColumns(Blueprint $t): void
+    {
+        $t->string('transmitted', 3)->default('no')->index('sws_data_transmitted_index');
+        $t->dateTime('transmitted_at')->nullable();
     }
 
     private static function householdColumns(Blueprint $t): void

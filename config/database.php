@@ -87,6 +87,24 @@ return [
             'options' => extension_loaded('pdo_mysql') ? [PDO::ATTR_TIMEOUT => 5] : [],
         ],
 
+        // Live server the field researchers' tablets read from (the old UPLB
+        // system's mysql_live). SWS Upload Data transmits SWS records here.
+        'mysql_live' => [
+            'driver' => env('DB_CONNECTION_LIVE', 'mysql'),
+            'host' => env('DB_HOST_LIVE', '10.18.20.42'),
+            'port' => env('DB_PORT_LIVE', '1177'),
+            'database' => env('DB_DATABASE_LIVE', 'ifpri'),
+            'username' => env('DB_USERNAME_LIVE', ''),
+            'password' => env('DB_PASSWORD_LIVE', ''),
+            'charset' => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix' => '',
+            'strict' => false,
+            'engine' => env('DB_ENGINE_LIVE', 'InnoDB'),
+            // Fail fast when the live server can't be reached instead of hanging the page
+            'options' => extension_loaded('pdo_mysql') ? [PDO::ATTR_TIMEOUT => 8] : [],
+        ],
+
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),

@@ -29,3 +29,16 @@
 [x-cloak] {
     display: none !important;
 }
+
+/* SWS household map popups (resources/js/sws-map.js) */
+.sws-pop { display: flex; flex-direction: column; gap: 2px; font-family: var(--font-sans); font-size: 12.5px; line-height: 1.45; color: #1B241E; }
+.sws-pop strong { font-size: 13.5px; color: #0F3D2E; }
+.sws-pop-name { font-weight: 700; }
+.sws-pop-coords { color: #5B6B62; font-variant-numeric: tabular-nums; }
+.sws-pop-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.sws-pop-entry { display: flex; flex-direction: column; gap: 2px; }
+.sws-pop-entry + .sws-pop-entry { border-top: 1px solid #E1EBE4; margin-top: 6px; padding-top: 8px; }
+.sws-pop-shared { margin-bottom: 4px; font-size: 11.5px; font-weight: 700; color: #B45309; }
+.sws-pop-coords { margin-top: 6px; }
+.sws-pop-coords a { color: #15803D; font-weight: 700; }
+.sws-pop-actions button, .sws-pop-actions a { font: inherit; font-weight: 700; color: #15803D; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }

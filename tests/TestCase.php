@@ -8,8 +8,9 @@ abstract class TestCase extends BaseTestCase
 {
     /**
      * Refuse to run against a real database. RefreshDatabase wipes the default
-     * connection and the survey tests write to the survey connection, so both
-     * must be the in-memory SQLite set in phpunit.xml. A cached config
+     * connection, the survey tests write to the survey connection and the
+     * transmission tests to mysql_live, so all three must be the in-memory
+     * SQLite set in phpunit.xml. A cached config
      * (bootstrap/cache/config.php) overrides phpunit.xml and points them at
      * MySQL instead - clear it with `php artisan config:clear`.
      */
@@ -18,7 +19,8 @@ abstract class TestCase extends BaseTestCase
         $app = parent::createApplication();
         $config = $app['config'];
 
-        foreach ([$config->get('database.default'), 'survey'] as $name) {
+        // The live server too: transmission tests must never reach the field researchers' database
+        foreach ([$config->get('database.default'), 'survey', 'mysql_live'] as $name) {
             $connection = $config->get("database.connections.{$name}");
 
             if (($connection['driver'] ?? null) !== 'sqlite' || ($connection['database'] ?? null) !== ':memory:') {

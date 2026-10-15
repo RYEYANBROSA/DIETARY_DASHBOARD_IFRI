@@ -10,6 +10,7 @@ use App\Support\F11Store;
 use App\Support\Survey;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -219,9 +220,10 @@ class F11Encoding extends Component
     public function checkFile(): void
     {
         $this->upload = null;
+        $this->resetValidation('file');
         $maxKb = F11Store::maxUploadKb();
 
-        $this->validate([
+        $check = Validator::make(['file' => $this->file], [
             'file' => ['required', 'file', 'mimes:csv,txt', "max:{$maxKb}"],
         ], [
             'file.required' => 'Choose a CSV file first.',
@@ -229,13 +231,20 @@ class F11Encoding extends Component
             'file.max' => 'The file is larger than ' . round($maxKb / 1024, 1) . ' MB. Split it into smaller files.',
         ], ['file' => 'F11 file']);
 
+        if ($check->fails()) {
+            $this->reset('file');
+            $this->fileProblem($check->errors()->first('file'));
+
+            return;
+        }
+
         $name = $this->file->getClientOriginalName();
         [$rows, $error] = F11Store::readCsv($this->file->getRealPath());
         $this->reset('file');
 
         if ($error) {
             $this->upload = null;
-            $this->addError('file', $error);
+            $this->fileProblem($error);
 
             return;
         }
@@ -257,6 +266,30 @@ class F11Encoding extends Component
             'problemCount' => count($result['problems']),
             'problems' => array_slice($result['problems'], 0, 200),
         ];
+
+        $this->announceCheck('member');
+    }
+
+    /** The file can't be used at all: say why inline and in an alert. */
+    private function fileProblem(string $message): void
+    {
+        $this->addError('file', $message);
+        $this->dispatch('toast', type: 'error', title: "This file can't be used", message: $message);
+    }
+
+    /** The result of checking an upload, as an alert over the result panel. */
+    private function announceCheck(string $noun): void
+    {
+        $u = $this->upload;
+        $summary = "{$u['valid']} {$noun}(s) ready: {$u['inserts']} new, {$u['updates']} update(s).";
+
+        if ($u['valid'] === 0) {
+            $this->dispatch('toast', type: 'error', title: 'No rows can be imported', message: "All {$u['rows']} row(s) have problems. They are listed on the page - fix them in the file and upload it again.");
+        } elseif ($u['problemCount']) {
+            $this->dispatch('toast', type: 'warning', title: 'File checked - some rows have problems', message: "{$summary} {$u['problemCount']} problem(s) are listed on the page; those rows will be left out.");
+        } else {
+            $this->dispatch('toast', type: 'success', persist: true, title: 'File checked', message: "{$summary} Review it, then press Import.");
+        }
     }
 
     public function import(): void
@@ -273,7 +306,7 @@ class F11Encoding extends Component
         [$inserted, $updated] = F11Store::import($records, $this->upload['name'], auth()->user());
         $this->upload = null;
 
-        $this->dispatch('toast', message: "Imported {$inserted} new and updated {$updated} existing member(s).", type: 'success');
+        $this->dispatch('toast', type: 'success', persist: true, title: 'Import complete', message: "Added {$inserted} new and updated {$updated} existing member(s).");
     }
 
     public function discardUpload(): void

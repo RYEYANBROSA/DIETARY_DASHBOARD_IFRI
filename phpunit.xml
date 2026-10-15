@@ -28,6 +28,8 @@
         <env name="DB_URL" value=""/>
         <env name="SURVEY_DB_DRIVER" value="sqlite"/>
         <env name="SURVEY_DB_DATABASE" value=":memory:"/>
+        <env name="DB_CONNECTION_LIVE" value="sqlite"/>
+        <env name="DB_DATABASE_LIVE" value=":memory:"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

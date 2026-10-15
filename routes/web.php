@@ -12,8 +12,10 @@ use App\Livewire\Dashboard;
 use App\Livewire\F11Encoding;
 use App\Livewire\F72Data;
 use App\Livewire\Profile;
+use App\Livewire\SwsData;
 use App\Livewire\SystemUsers;
 use App\Support\F11Store;
+use App\Support\SwsStore;
 use Illuminate\Support\Facades\Route;
 
 Route::redirect('/', '/login');
@@ -43,6 +45,20 @@ Route::middleware('auth')->group(function () {
             'Content-Type' => 'text/csv; charset=UTF-8',
             'Content-Disposition' => 'attachment; filename="f11_template.csv"',
         ]))->middleware('module:f11')->name('f11.template');
+
+        Route::middleware('module:sws')->group(function () {
+            Route::get('/sws', SwsData::class)->name('sws');
+            Route::get('/sws/template', fn () => response(SwsStore::templateCsv(), 200, [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+                'Content-Disposition' => 'attachment; filename="sws_template.csv"',
+            ]))->name('sws.template');
+            // Everything matching the data view's filters, as CSV with the template's headers
+            Route::get('/sws/export', fn (\Illuminate\Http\Request $request) => response()->streamDownload(
+                fn () => SwsStore::streamCsv(SwsData::filtered($request->only('city', 'district', 'barangay', 'search', 'by', 'upload', 'coords', 'sent'))),
+                'sws_data_' . now()->format('Y-m-d_H-i-s') . '.csv',
+                ['Content-Type' => 'text/csv; charset=UTF-8', 'X-Accel-Buffering' => 'no'],
+            ))->name('sws.export');
+        });
 
         Route::get('/f72', F72Data::class)->middleware('module:f72')->name('f72');
         Route::middleware('module:f72')->prefix('f72/export')->name('f72.export.')->controller(SurveyExportController::class)->group(function () {
