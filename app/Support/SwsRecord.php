@@ -16,7 +16,9 @@ use Illuminate\Support\Facades\Validator;
  *   email                    lower case
  *   latitude / longitude     decimal degrees, checked against their ranges
  *
- * A respondent is identified by SWS_MEMBER_NO.
+ * A record is identified by IDENTIFIER1 + IDENTIFIER2 + IDENTIFIER3 +
+ * SWS_MEMBER_NO together (see KEY): the same member no. can appear in more
+ * than one household.
  */
 final class SwsRecord
 {
@@ -29,6 +31,9 @@ final class SwsRecord
         'contact_number', 'email_address', 'latitude', 'longitude',
         'indexwomenname', 'idp_age',
     ];
+
+    /** The columns that together identify a record - the table's unique key. */
+    public const KEY = ['identifier1', 'identifier2', 'identifier3', 'sws_member_no'];
 
     /** Column => label for the form, the data view and messages. */
     public const LABELS = [
@@ -130,6 +135,28 @@ final class SwsRecord
         }
 
         return $form;
+    }
+
+    /** The record's key as one string ("QC001|QC001|QC001|SWS_001"), blanks as ''. */
+    public static function keyOf(object|array $record): string
+    {
+        $record = (array) $record;
+
+        return implode('|', array_map(fn ($c) => (string) ($record[$c] ?? ''), self::KEY));
+    }
+
+    /** The key columns and values, for a where(). */
+    public static function key(array $record): array
+    {
+        return array_map(fn ($v) => (string) ($v ?? ''), array_intersect_key($record, array_flip(self::KEY)));
+    }
+
+    /** "QC001-QC001-QC001 / SWS_001" for messages. */
+    public static function keyLabel(array $record): string
+    {
+        $household = implode('-', array_filter([$record['identifier1'] ?? '', $record['identifier2'] ?? '', $record['identifier3'] ?? ''], fn ($v) => $v !== ''));
+
+        return ($household !== '' ? $household . ' / ' : '') . ($record['sws_member_no'] ?? '');
     }
 
     /** "LASTNAME, FIRSTNAME" for messages and history lines. */

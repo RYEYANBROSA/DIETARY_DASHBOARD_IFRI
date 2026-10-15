@@ -105,3 +105,50 @@ Artisan::command('survey:copy-from {source} {--fresh : Empty the target tables f
 
     return 0;
 })->purpose('Copy survey data from another database on the same server');
+
+/*
+ * Re-key the live server's sws_data the same way as ours: unique on
+ * identifier1 + identifier2 + identifier3 + sws_member_no instead of
+ * sws_member_no alone. SWS Upload Data's Transmit waits until this is done.
+ * Without --apply it only reports what it would change.
+ *   php artisan sws:live-key           (look)
+ *   php artisan sws:live-key --apply   (change the live server)
+ */
+Artisan::command('sws:live-key {--apply : Change the live server}', function () {
+    $live = \App\Support\SwsStore::live();
+    $where = $live->getConfig('host') . ':' . $live->getConfig('port') . '/' . $live->getDatabaseName();
+
+    if (!$live->getSchemaBuilder()->hasTable('sws_data')) {
+        $this->error("There is no sws_data table on the live server ({$where}).");
+
+        return 1;
+    }
+
+    $this->line("Live server: {$where} - sws_data has " . $live->table('sws_data')->count() . ' row(s).');
+    foreach ($live->getSchemaBuilder()->getIndexes('sws_data') as $index) {
+        $this->line(sprintf('  %-26s %-8s (%s)', $index['name'], $index['unique'] ? 'unique' : 'index', implode(', ', $index['columns'])));
+    }
+
+    $this->line($live->getSchemaBuilder()->hasTable('listing_version')
+        ? 'listing_version: ' . (\App\Support\SwsStore::listingVersion() ?? 'empty - the first transmission sets it to 1')
+        : 'listing_version: missing - transmissions still go through, but the version is not raised.');
+
+    if (\App\Support\SwsStore::liveKeyReady()) {
+        $this->info('Already keyed on identifier1 + identifier2 + identifier3 + sws_member_no - nothing to do.');
+
+        return 0;
+    }
+
+    if (!$this->option('apply')) {
+        $this->warn('Would: set blank identifiers to \'\', add unique sws_data_key_unique (identifier1, identifier2, identifier3, sws_member_no), drop the unique index on sws_member_no alone, and keep a plain index on sws_member_no.');
+        $this->line('Run again with --apply to make the change. No rows are added or removed.');
+
+        return 0;
+    }
+
+    foreach (\App\Support\Survey::rekeySwsData($live) as $step) {
+        $this->info('Done: ' . $step);
+    }
+
+    return \App\Support\SwsStore::liveKeyReady() ? 0 : 1;
+})->purpose("Key the live server's sws_data on identifiers 1-3 + SWS member no.");

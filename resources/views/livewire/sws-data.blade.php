@@ -83,6 +83,8 @@
                             @foreach ($barangays as $option)<option value="{{ $option }}">{{ $option }}</option>@endforeach
                         </select>
                     </label>
+                    {{-- Hidden for now - see SwsData::SHOW_AUDIT_FILTERS --}}
+                    @if (\App\Livewire\SwsData::SHOW_AUDIT_FILTERS)
                     <label class="flex flex-col gap-1.5 text-[12.5px] font-semibold text-ink-soft">Added / edited by
                         <select wire:model.live="changedBy" class="{{ $filterSelect }}">
                             <option value="">Anyone</option>
@@ -95,6 +97,7 @@
                             @foreach ($uploads as $batch)<option value="{{ $batch->id }}">{{ $batch->subject }} · {{ $batch->created_at->format('M j, g:i A') }}</option>@endforeach
                         </select>
                     </label>
+                    @endif
                     <label class="flex flex-col gap-1.5 text-[12.5px] font-semibold text-ink-soft">Transmitted
                         <select wire:model.live="transmitted" class="{{ $filterSelect }}">
                             <option value="">All</option>
@@ -107,6 +110,18 @@
                     </label>
                     <button type="button" wire:click="clearFilters" class="h-[42px] rounded-[10px] border border-field bg-white px-4 text-sm font-bold text-ink-soft hover:border-green-700">Clear</button>
                 </div>
+
+                {{-- While those filters are hidden, still say when one is narrowing the list (e.g. "View records" under an upload) --}}
+                @if (!\App\Livewire\SwsData::SHOW_AUDIT_FILTERS && ($changedBy !== '' || $uploadBatch !== ''))
+                    <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-blue-50 px-3.5 py-2.5 text-[13px] text-blue-900">
+                        <span>
+                            Showing only records
+                            @if ($uploadBatch !== '') from upload <strong>{{ $uploads->firstWhere('id', (int) $uploadBatch)?->subject ?? '#' . $uploadBatch }}</strong>@endif
+                            @if ($changedBy !== '') {{ $uploadBatch !== '' ? 'and' : '' }} added or edited by <strong>{{ $editors->firstWhere('id', (int) $changedBy)?->name ?? 'that account' }}</strong>@endif
+                        </span>
+                        <button type="button" wire:click="$set('uploadBatch', ''); $set('changedBy', '')" class="font-bold underline">Show all</button>
+                    </div>
+                @endif
 
                 @if ($tab === 'map')
                     {{-- ===== View map: households from their latitude / longitude ===== --}}
@@ -242,7 +257,14 @@
                                         @endif
                                     </td>
                                     <td class="sticky right-0 z-[5] border-b border-l border-[#EEF3EF] bg-white px-2 py-1.5 whitespace-nowrap group-hover:bg-[#F6FAF7]">
-                                        <button type="button" wire:click="edit({{ $row->id }})" class="inline-flex size-8 items-center justify-center rounded-lg text-ink-soft hover:bg-green-50 hover:text-green-800" aria-label="Edit {{ $row->sws_member_no }}"><x-icon name="edit" size="16" /></button>
+                                        @if ($row->transmitted === 'yes')
+                                            {{-- Locked: looks disabled, says why when pressed --}}
+                                            <button type="button" aria-disabled="true" title="Cannot edit - already transmitted"
+                                                x-on:click="notify({ type: 'warning', title: 'Cannot edit - already transmitted', message: @js($row->sws_member_no . ' was transmitted to the live server' . ($row->transmitted_at ? ' on ' . \Illuminate\Support\Carbon::parse($row->transmitted_at)->format('M j, Y g:i A') : '') . '. This record is already on the live server, so it cannot be edited here anymore.') })"
+                                                class="inline-flex size-8 cursor-not-allowed items-center justify-center rounded-lg text-[#C9D4CD]" aria-label="Edit {{ $row->sws_member_no }} (locked - already transmitted)"><x-icon name="lock" size="16" /></button>
+                                        @else
+                                            <button type="button" wire:click="edit({{ $row->id }})" class="inline-flex size-8 items-center justify-center rounded-lg text-ink-soft hover:bg-green-50 hover:text-green-800" aria-label="Edit {{ $row->sws_member_no }}"><x-icon name="edit" size="16" /></button>
+                                        @endif
                                         @if (is_numeric($row->latitude) && is_numeric($row->longitude))
                                             <button type="button" wire:click="showOnMap({{ $row->id }})" class="inline-flex size-8 items-center justify-center rounded-lg text-ink-soft hover:bg-green-50 hover:text-green-800" title="Show on map" aria-label="Show {{ $row->sws_member_no }} on the map"><x-icon name="map-pin" size="16" /></button>
                                         @else
@@ -271,7 +293,7 @@
                             <div class="flex flex-wrap items-start justify-between gap-3">
                                 <div class="flex flex-col gap-1">
                                     <h2 class="text-lg font-bold">{{ $editingId ? 'Edit SWS record' : 'Add an SWS record' }}</h2>
-                                    <p class="text-[13.5px] text-muted">Names, area and address are saved in capitals. Each SWS member no. can only be used once.</p>
+                                    <p class="text-[13.5px] text-muted">Names, area and address are saved in capitals. The same identifiers and SWS member no. can only be used once.</p>
                                 </div>
                                 @if ($editingId)<span class="rounded-full bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-900">Editing {{ $record['sws_member_no'] }}</span>@endif
                             </div>
@@ -415,7 +437,7 @@
                                             'CITY, BARANGAY' => 'Required.',
                                             'DISTRICT' => 'Optional.',
                                             'IDENTIFIER1' => 'Required. IDENTIFIER2 and IDENTIFIER3 are optional.',
-                                            'SWS_MEMBER_NO' => 'Required and unique - letters, numbers and - _ / . (e.g. SWS_001). An existing number updates that record.',
+                                            'SWS_MEMBER_NO' => 'Required - letters, numbers and - _ / . (e.g. SWS_001). Together with IDENTIFIER1-3 it identifies the record: the same identifiers and member no. update that record; the same member no. in another household is a separate record.',
                                             'LASTNAME, FIRSTNAME' => 'Required. MIDDLENAME and SUFFIX are optional. Saved in capitals.',
                                             'FLOOR_NO, BUILDING_NO, BLOCK, STREET_NAME, SUBD' => 'Optional address parts.',
                                             'CONTACT_NUMBER' => 'Optional. 7 to 11 digits; 9171234567 (leading 0 dropped by Excel) is saved as 09171234567.',

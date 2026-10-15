@@ -222,6 +222,23 @@ class SwsDataTest extends TestCase
             ->assertDispatched('toast', fn ($name, $p) => $p['type'] === 'error' && $p['title'] === "This file can't be used");
     }
 
+    public function test_excel_float_noise_does_not_count_as_a_change(): void
+    {
+        $this->actingAs($this->validator);
+        Livewire::test(SwsData::class)->set('record', $this->record(['latitude' => '14.6567000', 'longitude' => '121.0199000']))->call('save');
+
+        // Excel re-saves 14.6567 as 14.656700000000001 - the app reads it back as Excel shows it
+        $path = $this->xlsx($this->record(['latitude' => '14.656700000000001', 'longitude' => '121.01990000000001']));
+        [$rows] = SwsStore::readFile($path, 'xlsx');
+        $this->assertSame(['14.6567', '121.0199'], [$rows[0]['data']['latitude'], $rows[0]['data']['longitude']]);
+
+        // ...and as the same value as the stored 14.6567000: nothing to update
+        $this->assertSame([], SwsStore::checkUpload($rows)['problems']);
+        Livewire::test(SwsData::class)->set('file', UploadedFile::fake()->createWithContent('sws.xlsx', file_get_contents($path)))->call('import');
+        $this->assertSame(0, SwsChange::where('action', 'updated')->count(), 'an identical row is not an edit');
+        @unlink($path);
+    }
+
     public function test_a_file_without_the_sws_headers_is_refused(): void
     {
         $this->actingAs($this->validator);
@@ -276,6 +293,13 @@ class SwsDataTest extends TestCase
         if (!$live->getSchemaBuilder()->hasTable('sws_data')) {
             $live->getSchemaBuilder()->create('sws_data', fn ($t) => \App\Support\Survey::swsDataColumns($t));
         }
+        if (!$live->getSchemaBuilder()->hasTable('listing_version')) {
+            // As on the live server: CREATE TABLE listing_version (id int NOT NULL, version int NOT NULL)
+            $live->getSchemaBuilder()->create('listing_version', function ($t) {
+                $t->integer('id');
+                $t->integer('version');
+            });
+        }
 
         return $live->table('sws_data');
     }
@@ -308,31 +332,58 @@ class SwsDataTest extends TestCase
         Livewire::test(SwsData::class)->call('transmit')->assertDispatched('toast', fn ($n, $p) => $p['title'] === 'Nothing to transmit');
     }
 
-    public function test_a_changed_record_must_be_transmitted_again(): void
+    public function test_transmitted_records_are_locked(): void
     {
         $this->actingAs($this->validator);
         $live = $this->liveTable();
         Livewire::test(SwsData::class)->set('record', $this->record())->call('save');
-        Livewire::test(SwsData::class)->call('transmit');
         $id = SwsStore::table()->value('id');
 
-        // Saving without a change keeps it transmitted
-        Livewire::test(SwsData::class)->call('edit', $id)->call('save');
+        // Before transmission it can still be edited
+        Livewire::test(SwsData::class)->call('edit', $id)->assertSet('tab', 'entry')->assertSet('editingId', $id);
+
+        Livewire::test(SwsData::class)->call('transmit');
         $this->assertSame('yes', SwsStore::table()->value('transmitted'));
 
-        // A real change puts it back in the queue...
-        Livewire::test(SwsData::class)->call('edit', $id)->set('record.street_name', 'Kalayaan')->call('save');
-        $this->assertSame('no', SwsStore::table()->value('transmitted'));
-        $this->assertSame(1, Livewire::test(SwsData::class)->set('transmitted', 'no')->viewData('rows')->total());
+        // The list shows a locked button instead of Edit
+        Livewire::test(SwsData::class)
+            ->assertSeeHtml('Edit SWS_001 (locked - already transmitted)')
+            ->assertDontSeeHtml('wire:click="edit(' . $id . ')"');
 
-        // ...and the next transmission updates the live copy
-        Livewire::test(SwsData::class)->call('transmit');
-        $this->assertSame('KALAYAAN', $live->where('sws_member_no', 'SWS_001')->value('street_name'));
-        $this->assertSame(1, $live->count());
+        // Opening it (map popup, old link) is refused with an alert
+        Livewire::test(SwsData::class)
+            ->call('edit', $id)
+            ->assertSet('editingId', null)
+            ->assertSet('tab', 'data')
+            ->assertDispatched('toast', fn ($n, $p) => $p['title'] === 'Cannot edit - already transmitted');
 
-        // An upload that changes it does the same
-        Livewire::test(SwsData::class)->set('file', UploadedFile::fake()->createWithContent('sws.csv', $this->csv($this->record(['street_name' => 'Kamias']))))->call('import');
-        $this->assertSame('no', SwsStore::table()->value('transmitted'));
+        // A form opened before it was transmitted can't save over it
+        $open = Livewire::test(SwsData::class)->set('record', $this->record(['street_name' => 'Kalayaan']))->set('editingId', $id)->set('tab', 'entry');
+        $open->call('save')->assertDispatched('toast', fn ($n, $p) => $p['title'] === 'Cannot edit - already transmitted');
+        $this->assertSame('MAGINHAWA', SwsStore::table()->value('street_name'));
+
+        // Uploads: a change to it is a problem, an identical row is skipped, new rows still go in
+        Livewire::test(SwsData::class)
+            ->call('showTab', 'upload')
+            ->set('file', UploadedFile::fake()->createWithContent('sws.csv', $this->csv(
+                $this->record(['street_name' => 'Kamias']),
+                $this->record(['sws_member_no' => 'SWS_002']),
+            )))
+            ->assertSet('upload.problemCount', 1)
+            ->assertSee('is already transmitted to the live server')
+            ->assertSet('upload.inserts', 1)
+            ->assertSet('upload.updates', 0)
+            ->call('import');
+        $this->assertSame('MAGINHAWA', SwsStore::table()->where('sws_member_no', 'SWS_001')->value('street_name'));
+        $this->assertSame(2, SwsStore::table()->count());
+
+        Livewire::test(SwsData::class)
+            ->set('file', UploadedFile::fake()->createWithContent('sws.csv', $this->csv($this->record())))
+            ->assertSet('upload.problemCount', 0)
+            ->assertSet('upload.valid', 0);
+
+        // The live copy is untouched
+        $this->assertSame('MAGINHAWA', $live->where('sws_member_no', 'SWS_001')->value('street_name'));
     }
 
     public function test_only_records_under_the_filters_are_transmitted(): void
@@ -364,6 +415,111 @@ class SwsDataTest extends TestCase
 
         $this->assertSame('no', SwsStore::table()->value('transmitted'));
         $this->assertSame(0, SwsActivity::where('action', 'transmitted')->count());
+    }
+
+    public function test_a_record_is_unique_on_its_identifiers_and_member_number(): void
+    {
+        $this->actingAs($this->validator);
+        Livewire::test(SwsData::class)->set('record', $this->record())->call('save')->assertHasNoErrors();
+
+        // Same member no. in another household: allowed
+        Livewire::test(SwsData::class)
+            ->set('record', $this->record(['identifier1' => 'QC777', 'identifier2' => 'QC777', 'identifier3' => '', 'firstname' => 'Pedro']))
+            ->call('save')
+            ->assertHasNoErrors();
+
+        // Same identifiers and member no.: refused
+        Livewire::test(SwsData::class)
+            ->call('showTab', 'entry')
+            ->set('record', $this->record(['firstname' => 'Copy']))
+            ->call('save')
+            ->assertHasErrors('record.sws_member_no')
+            ->assertSee('the same identifiers and SWS member no. can only be used once');
+
+        $this->assertSame(2, SwsStore::table()->where('sws_member_no', 'SWS_001')->count());
+
+        // Uploads follow the same key: one update, one new household, one duplicate line
+        $component = Livewire::test(SwsData::class)->set('file', UploadedFile::fake()->createWithContent('sws.csv', $this->csv(
+            $this->record(['street_name' => 'Kalayaan']),
+            $this->record(['identifier1' => 'QC888', 'identifier2' => 'QC888', 'identifier3' => 'QC888']),
+            $this->record(['identifier1' => 'QC888', 'identifier2' => 'QC888', 'identifier3' => 'QC888', 'firstname' => 'Again']),
+        )));
+        $component->assertSet('upload.updates', 1)->assertSet('upload.inserts', 1)->assertSet('upload.problemCount', 1);
+    }
+
+    public function test_an_old_member_number_key_is_rekeyed(): void
+    {
+        $live = SwsStore::live();
+        $live->getSchemaBuilder()->create('sws_data', function ($t) {
+            $t->increments('id');
+            foreach (SwsRecord::COLUMNS as $c) {
+                $c === 'sws_member_no' ? $t->string($c, 50)->unique('sws_data_member_unique') : $t->string($c, 150)->nullable();
+            }
+            $t->dateTime('created_at')->nullable();
+            $t->dateTime('updated_at')->nullable();
+        });
+        $live->table('sws_data')->insert(['sws_member_no' => 'SWS_001', 'identifier1' => 'QC001', 'identifier2' => null, 'identifier3' => null]);
+        $this->assertFalse(SwsStore::liveKeyReady());
+
+        // Transmit refuses while the live server could overwrite households
+        $this->actingAs($this->validator);
+        Livewire::test(SwsData::class)->set('record', $this->record())->call('save');
+        Livewire::test(SwsData::class)
+            ->call('transmit')
+            ->assertDispatched('toast', fn ($n, $p) => $p['title'] === 'The live server needs an update first');
+        $this->assertSame('no', SwsStore::table()->value('transmitted'));
+
+        // The command reports first, changes only with --apply
+        $this->artisan('sws:live-key')->expectsOutputToContain('Would:')->assertSuccessful();
+        $this->assertFalse(SwsStore::liveKeyReady());
+        $this->artisan('sws:live-key --apply')->assertSuccessful();
+
+        $this->assertTrue(SwsStore::liveKeyReady());
+        $this->assertSame('', $live->table('sws_data')->value('identifier2'), 'blank identifiers become empty strings');
+        $live->table('sws_data')->insert(['sws_member_no' => 'SWS_001', 'identifier1' => 'QC002', 'identifier2' => '', 'identifier3' => '']);
+        $this->assertSame(2, $live->table('sws_data')->count(), 'the same member no. can now be in two households');
+    }
+
+    public function test_each_transmission_raises_the_listing_version(): void
+    {
+        $this->actingAs($this->validator);
+        $this->liveTable();
+        $versions = SwsStore::live()->table('listing_version');
+        $this->assertNull(SwsStore::listingVersion());
+
+        // First transmission: the empty table gets version 1
+        Livewire::test(SwsData::class)->set('record', $this->record())->call('save');
+        Livewire::test(SwsData::class)->call('transmit')
+            ->assertDispatched('toast', fn ($n, $p) => str_contains($p['message'], 'Listing version is now 1'));
+        $this->assertSame([['id' => 1, 'version' => 1]], $versions->get()->map(fn ($r) => (array) $r)->all());
+
+        // Nothing new to send: the version stays
+        Livewire::test(SwsData::class)->call('transmit');
+        $this->assertSame(1, SwsStore::listingVersion());
+
+        // Each later transmission adds one: 1 -> 2 -> 3, still a single row
+        foreach ([2, 3] as $expected) {
+            Livewire::test(SwsData::class)->set('record', $this->record(['sws_member_no' => "SWS_10{$expected}"]))->call('save');
+            Livewire::test(SwsData::class)->call('transmit');
+            $this->assertSame($expected, SwsStore::listingVersion());
+        }
+        $this->assertSame(1, $versions->count());
+        $this->assertStringContainsString('listing version 3', SwsActivity::where('action', 'transmitted')->latest('id')->first()->subject);
+    }
+
+    public function test_a_missing_listing_version_table_does_not_block_transmission(): void
+    {
+        $this->actingAs($this->validator);
+        $live = $this->liveTable();
+        SwsStore::live()->getSchemaBuilder()->drop('listing_version');
+        Livewire::test(SwsData::class)->set('record', $this->record())->call('save');
+
+        Livewire::test(SwsData::class)
+            ->call('transmit')
+            ->assertDispatched('toast', fn ($n, $p) => $p['title'] === 'Data transmitted' && str_contains($p['message'], 'listing version could not be updated'));
+
+        $this->assertSame(1, $live->count(), 'the data still reaches the live server');
+        $this->assertSame('yes', SwsStore::table()->value('transmitted'));
     }
 
     public function test_the_data_view_filters_sorts_pages_and_exports(): void

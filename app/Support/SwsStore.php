@@ -16,10 +16,17 @@ use ZipArchive;
  * per record touched - the same way F11Store does for F11. There is no delete:
  * SWS records are corrected by editing.
  *
+ * Once a record is transmitted it is locked: the form, the map and uploads
+ * can no longer change it (see isLocked()).
+ *
  * transmit() sends records to the live server's sws_data (the mysql_live
  * connection), which the field researchers' tablets read. Each record carries
  * transmitted = yes / no: yes once the live server has it, back to no as soon
  * as it is changed here, so it is sent again with the next transmission.
+ * Every transmission that sends records also raises the live server's
+ * listing_version (1 the first time, then 2, 3 ...) - a signal for the tablet
+ * side that new or edited SWS data has arrived. It never blocks a transmission:
+ * if the table is missing or can't be updated, the data still goes through.
  */
 final class SwsStore
 {
@@ -33,6 +40,9 @@ final class SwsStore
 
     /** The live server's copy of sws_data, read by the field researchers' tablets. */
     public const LIVE_CONNECTION = 'mysql_live';
+
+    /** Live table holding the listing version the tablets compare against. */
+    public const VERSION_TABLE = 'listing_version';
 
     /** Records sent to the live server per round trip. */
     private const TRANSMIT_CHUNK = 200;
@@ -53,18 +63,48 @@ final class SwsStore
         return Survey::db()->table(self::TABLE);
     }
 
-    /** The record holding $memberNo, ignoring $exceptId. */
-    public static function findByMemberNo(string $memberNo, ?int $exceptId = null): ?object
+    /** The record with the same identifiers and SWS member no., ignoring $exceptId. */
+    public static function findByKey(array $record, ?int $exceptId = null): ?object
     {
         return self::table()
-            ->where('sws_member_no', $memberNo)
+            ->where(SwsRecord::key($record))
             ->when($exceptId, fn ($q) => $q->where('id', '!=', $exceptId))
             ->first();
+    }
+
+    /**
+     * Whether the live server's sws_data is keyed the same way as ours
+     * (identifiers 1-3 + SWS member no.). While it is still unique on the
+     * member no. alone, two households sharing a member no. would overwrite
+     * each other there, so transmission waits for `php artisan sws:live-key`.
+     */
+    public static function liveKeyReady(): bool
+    {
+        if (!self::live()->getSchemaBuilder()->hasTable(self::TABLE)) {
+            throw new \RuntimeException('The live server has no ' . self::TABLE . ' table.');
+        }
+
+        $unique = collect(self::live()->getSchemaBuilder()->getIndexes(self::TABLE))->filter(fn ($i) => $i['unique'] && !$i['primary']);
+
+        $hasKey = $unique->contains(fn ($i) => collect($i['columns'])->map(fn ($c) => strtolower($c))->sort()->values()->all() === collect(SwsRecord::KEY)->sort()->values()->all());
+        $hasNarrower = $unique->contains(fn ($i) => array_map('strtolower', $i['columns']) === ['sws_member_no']);
+
+        return $hasKey && !$hasNarrower;
+    }
+
+    /** Transmitted records can't be changed here anymore. */
+    public static function isLocked(object|array|null $row): bool
+    {
+        return $row !== null && (((array) $row)['transmitted'] ?? null) === 'yes';
     }
 
     /** Insert a new record, or update record $id. Returns the row id. */
     public static function save(array $record, ?int $id, User $user): int
     {
+        if ($id && self::isLocked(self::table()->where('id', $id)->first())) {
+            throw new \LogicException('SWS record ' . $id . ' is already transmitted and locked.');
+        }
+
         $values = self::storable($record);
         $isNew = !$id;
 
@@ -113,9 +153,9 @@ final class SwsStore
                 continue;
             }
 
-            $key = $record['sws_member_no'];
+            $key = SwsRecord::keyOf($record);
             if (isset($seen[$key])) {
-                $problems[] = ['line' => $line, 'column' => 'SWS_MEMBER_NO', 'message' => "{$key} is already on line {$seen[$key]} of this file."];
+                $problems[] = ['line' => $line, 'column' => 'SWS_MEMBER_NO', 'message' => SwsRecord::keyLabel($record) . " (same identifiers and SWS member no.) is already on line {$seen[$key]} of this file."];
 
                 continue;
             }
@@ -125,7 +165,22 @@ final class SwsStore
         }
 
         $existing = self::existing($records);
-        $updates = count(array_filter($records, fn ($r) => isset($existing[$r['sws_member_no']])));
+
+        // Rows for transmitted records: a change is refused, an identical row is simply skipped
+        $records = array_values(array_filter($records, function ($record) use ($existing, $seen, &$problems) {
+            $before = $existing[SwsRecord::keyOf($record)] ?? null;
+            if (!self::isLocked($before)) {
+                return true;
+            }
+            if (self::diff($before, self::storable($record))) {
+                $problems[] = ['line' => $seen[SwsRecord::keyOf($record)], 'column' => 'SWS_MEMBER_NO', 'message' => SwsRecord::keyLabel($record) . ' is already transmitted to the live server and can\'t be changed.'];
+            }
+
+            return false;
+        }));
+        usort($problems, fn ($a, $b) => $a['line'] <=> $b['line']);
+
+        $updates = count(array_filter($records, fn ($r) => isset($existing[SwsRecord::keyOf($r)])));
 
         return ['records' => $records, 'problems' => $problems, 'inserts' => count($records) - $updates, 'updates' => $updates];
     }
@@ -142,7 +197,12 @@ final class SwsStore
 
             foreach ($records as $record) {
                 $values = self::storable($record);
-                $before = $existing[$record['sws_member_no']] ?? null;
+                $before = $existing[SwsRecord::keyOf($record)] ?? null;
+
+                // Transmitted since the file was checked: leave it alone
+                if (self::isLocked($before)) {
+                    continue;
+                }
 
                 if ($before) {
                     $changes = self::diff($before, $values);
@@ -199,14 +259,21 @@ final class SwsStore
                 continue;
             }
 
-            $already = $live->table(self::TABLE)->whereIn('sws_member_no', $rows->pluck('sws_member_no')->all())->pluck('sws_member_no')->flip();
+            // Which of these households the live server already has (same identifiers + member no.)
+            $already = $live->table(self::TABLE)->whereIn('sws_member_no', $rows->pluck('sws_member_no')->unique()->all())
+                ->get(SwsRecord::KEY)->mapWithKeys(fn ($r) => [SwsRecord::keyOf($r) => true]);
             $now = now();
-            $values = $rows->map(fn ($r) => array_intersect_key((array) $r, array_flip($columns)) + ['created_at' => $now, 'updated_at' => $now])->all();
+            // Blank identifiers are sent as '' so they match the live key exactly
+            $values = $rows->map(fn ($r) => array_merge(
+                array_intersect_key((array) $r, array_flip($columns)),
+                array_map(fn ($v) => (string) ($v ?? ''), array_intersect_key((array) $r, array_flip(SwsRecord::KEY))),
+                ['created_at' => $now, 'updated_at' => $now],
+            ))->all();
 
             $live->transaction(fn () => $live->table(self::TABLE)->upsert(
                 $values,
-                ['sws_member_no'],
-                [...array_values(array_diff($columns, ['sws_member_no'])), 'updated_at'],
+                SwsRecord::KEY,
+                [...array_values(array_diff($columns, SwsRecord::KEY)), 'updated_at'],
             ));
 
             foreach ($rows as $row) {
@@ -216,19 +283,21 @@ final class SwsStore
                     ->update(['transmitted' => 'yes', 'transmitted_at' => $now]);
 
                 if ($marked) {
-                    $history[] = [$row->id, (array) $row, isset($already[$row->sws_member_no]) ? 'updated on the live server' : 'added to the live server'];
+                    $history[] = [$row->id, (array) $row, isset($already[SwsRecord::keyOf($row)]) ? 'updated on the live server' : 'added to the live server'];
                 }
             }
 
             $sent += $rows->count();
-            $new += $rows->count() - $already->count();
+            $new += $rows->filter(fn ($r) => !isset($already[SwsRecord::keyOf($r)]))->count();
         }
+
+        $version = $sent ? self::tryBumpListingVersion() : null;
 
         if ($sent) {
             $activity = SwsActivity::create([
                 'user_id' => $user->id,
                 'action' => 'transmitted',
-                'subject' => "{$sent} record(s) to the live server",
+                'subject' => "{$sent} record(s) to the live server" . ($version ? " · listing version {$version}" : ''),
                 'area' => mb_substr((string) config('database.connections.' . self::LIVE_CONNECTION . '.database'), 0, 250),
                 'inserted' => $new,
                 'updated' => $sent - $new,
@@ -241,7 +310,62 @@ final class SwsStore
             }
         }
 
-        return [$sent, $new, $sent - $new];
+        return [$sent, $new, $sent - $new, $version];
+    }
+
+    /**
+     * Raise the live server's listing version after new data is sent: 1 when
+     * the table is empty, otherwise the last version + 1 (2 becomes 3). The
+     * table keeps one row; if it ever has more, the highest version is raised.
+     * Returns the new version.
+     */
+    public static function bumpListingVersion(): int
+    {
+        $live = self::live();
+
+        return $live->transaction(function () use ($live) {
+            $current = $live->table(self::VERSION_TABLE)->orderByDesc('version')->lockForUpdate()->first();
+
+            if (!$current) {
+                $live->table(self::VERSION_TABLE)->insert(['id' => 1, 'version' => 1]);
+
+                return 1;
+            }
+
+            $next = (int) $current->version + 1;
+            $live->table(self::VERSION_TABLE)->where('id', $current->id)->update(['version' => $next]);
+
+            return $next;
+        });
+    }
+
+    /**
+     * bumpListingVersion() without ever failing the transmission: null when
+     * listing_version is missing or couldn't be updated (logged).
+     */
+    public static function tryBumpListingVersion(): ?int
+    {
+        try {
+            if (!self::live()->getSchemaBuilder()->hasTable(self::VERSION_TABLE)) {
+                \Illuminate\Support\Facades\Log::warning('SWS transmission: no ' . self::VERSION_TABLE . ' table on the live server - version not raised.');
+
+                return null;
+            }
+
+            return self::bumpListingVersion();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('SWS transmission: listing version not raised: ' . $e->getMessage());
+
+            return null;
+        }
+    }
+
+    /** The live server's current listing version, or null when it has none yet. */
+    public static function listingVersion(): ?int
+    {
+        $version = self::live()->table(self::VERSION_TABLE)->max('version');
+
+        return $version === null ? null : (int) $version;
     }
 
     // ----- Files -----
@@ -400,6 +524,10 @@ final class SwsStore
                 // Whole numbers Excel wrote in exponent form (long phone numbers)
                 if ($type === '' && preg_match('/^-?\d+(\.\d+)?E\+?\d+$/i', $value) && floor((float) $value) == (float) $value) {
                     $value = number_format((float) $value, 0, '', '');
+                } elseif ($type === '' && preg_match('/^-?\d+\.\d+$/', $value) && strlen(preg_replace('/\D/', '', $value)) > 15) {
+                    // Excel saves decimals at full float precision (14.6567 as 14.656700000000001);
+                    // read them back the way Excel shows them
+                    $value = rtrim(rtrim(sprintf('%.15G', (float) $value), '0'), '.');
                 }
                 $cells[$index] = $value;
             }
@@ -428,13 +556,13 @@ final class SwsStore
 
     // ----- Internals -----
 
-    /** sws_member_no => existing row (array), for the records being checked. */
+    /** Record key => existing row (array), for the records being checked. */
     private static function existing(array $records): array
     {
         $existing = [];
-        foreach (array_chunk(array_column($records, 'sws_member_no'), 500) as $chunk) {
+        foreach (array_chunk(array_values(array_unique(array_column($records, 'sws_member_no'))), 500) as $chunk) {
             foreach (self::table()->whereIn('sws_member_no', $chunk)->get() as $row) {
-                $existing[$row->sws_member_no] = (array) $row;
+                $existing[SwsRecord::keyOf($row)] = (array) $row;
             }
         }
 
@@ -452,7 +580,10 @@ final class SwsStore
         $changes = [];
         foreach ($values as $column => $new) {
             $old = $before[$column] ?? null;
-            if ((string) $old !== (string) $new) {
+            // Coordinates and age are numbers: 14.6567000 and 14.6567 are the same value
+            $numeric = in_array($column, ['latitude', 'longitude', 'idp_age'], true) && is_numeric($old) && is_numeric($new);
+            $same = $numeric ? abs((float) $old - (float) $new) < 1e-9 : (string) $old === (string) $new;
+            if (!$same) {
                 $changes[$column] = [$old, $new];
             }
         }
@@ -462,7 +593,7 @@ final class SwsStore
 
     private static function subject(array $record): string
     {
-        return SwsRecord::name($record) . ' · ' . ($record['sws_member_no'] ?? '');
+        return SwsRecord::name($record) . ' · ' . SwsRecord::keyLabel($record);
     }
 
     private static function area(array $record): string

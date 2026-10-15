@@ -36,6 +36,13 @@ class SwsData extends Component
 
     public const PER_PAGE = [25, 50, 100, 250];
 
+    /**
+     * The "Added / edited by" and "Upload" filters, hidden for now. They still
+     * work (e.g. "View records" under an upload sets the upload filter); set
+     * this to true to show them again.
+     */
+    public const SHOW_AUDIT_FILTERS = false;
+
     /** Most households drawn on the map at once. */
     public const MAP_LIMIT = 5000;
 
@@ -185,11 +192,24 @@ class SwsData extends Component
             return;
         }
 
+        if (SwsStore::isLocked($row)) {
+            $this->lockedAlert($row);
+
+            return;
+        }
+
         $this->resetValidation();
         $this->record = SwsRecord::toForm($row);
         $this->editingId = $id;
         $this->historyId = null;
         $this->tab = 'entry';
+    }
+
+    private function lockedAlert(object $row): void
+    {
+        $when = $row->transmitted_at ? ' on ' . \Illuminate\Support\Carbon::parse($row->transmitted_at)->format('M j, Y g:i A') : '';
+        $this->dispatch('toast', type: 'warning', title: 'Cannot edit - already transmitted',
+            message: "{$row->sws_member_no} was transmitted to the live server{$when}. " . 'This record is already on the live server, so it cannot be edited here anymore.');
     }
 
     public function clearRecord(): void
@@ -212,8 +232,17 @@ class SwsData extends Component
             return;
         }
 
-        if ($other = SwsStore::findByMemberNo($record['sws_member_no'], $this->editingId)) {
-            $this->addError('record.sws_member_no', "{$record['sws_member_no']} is already used by {$other->lastname}, {$other->firstname}.");
+        // Transmitted while the form was open
+        if ($this->editingId && SwsStore::isLocked($row = SwsStore::table()->where('id', $this->editingId)->first())) {
+            $this->lockedAlert($row);
+            $this->clearRecord();
+            $this->tab = 'data';
+
+            return;
+        }
+
+        if ($other = SwsStore::findByKey($record, $this->editingId)) {
+            $this->addError('record.sws_member_no', SwsRecord::keyLabel($record) . " is already used by {$other->lastname}, {$other->firstname} - the same identifiers and SWS member no. can only be used once.");
 
             return;
         }
@@ -330,7 +359,14 @@ class SwsData extends Component
         }
 
         try {
-            [$sent, $new, $updated] = SwsStore::transmit($ids, auth()->user());
+            if (!SwsStore::liveKeyReady()) {
+                $this->dispatch('toast', type: 'error', title: 'The live server needs an update first',
+                    message: 'Its sws_data is still unique on SWS member no. alone, so households sharing a member no. would overwrite each other there. An administrator has to run "php artisan sws:live-key --apply" once; then transmit again. Nothing was sent.');
+
+                return;
+            }
+
+            [$sent, $new, $updated, $version] = SwsStore::transmit($ids, auth()->user());
         } catch (\Throwable $e) {
             Log::error('SWS transmission failed: ' . $e->getMessage());
             $this->dispatch('toast', type: 'error', title: 'Transmission failed',
@@ -340,7 +376,8 @@ class SwsData extends Component
         }
 
         $this->dispatch('toast', type: 'success', persist: true, title: 'Data transmitted',
-            message: "{$sent} SWS record(s) are now on the live server ({$new} new, {$updated} updated). Field researchers can access them on their tablets.");
+            message: "{$sent} SWS record(s) are now on the live server ({$new} new, {$updated} updated). "
+                . ($version ? "Listing version is now {$version}." : 'The listing version could not be updated (no listing_version table on the live server), but the data was sent.'));
     }
 
     public function import(): void

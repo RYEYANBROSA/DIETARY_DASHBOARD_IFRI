@@ -107,20 +107,31 @@ BUILDING_NO, BLOCK, STREET_NAME, SUBD, CONTACT_NUMBER, EMAIL_ADDRESS, LATITUDE, 
   `sws_data` table). The field researchers' tablets read from there.
   - The badge on the button counts records not on the live server yet.
   - Pressing it asks for confirmation, then sends every *not transmitted* record that matches the current filters.
-    Records are inserted on the live server, or updated there when it already has that SWS_MEMBER_NO.
+    Records are inserted on the live server, or updated there when it already has the same identifiers and
+    SWS_MEMBER_NO.
+  - The live server's `sws_data` must use the same key. `php artisan sws:live-key` reports how it is keyed now;
+    `php artisan sws:live-key --apply` changes it, once. Until then, Transmit refuses to send, so households
+    sharing a member no. can't overwrite each other on the live server.
   - Each record has **TRANSMITTED** (yes / no) and **TRANSMITTED_AT**. A record becomes *yes* only after the live
-    server accepts it. Any later change, by form or upload, sets it back to *no*, so the next transmission sends
-    it again.
+    server accepts it.
+  - **Transmitted records are locked.** Their edit button turns into a grey lock that explains why when clicked.
+    Opening one from the map, saving a form opened before it was sent, and upload rows that would change it are
+    all refused; an identical upload row is simply skipped. New records can still be added and transmitted.
   - Filter by **Transmitted** to see what has or hasn't been sent. History shows each transmission and who made it.
   - If the live server can't be reached, nothing more is marked as transmitted, and an alert says so.
+  - Each transmission that sends records raises the live server's **`listing_version`**: 1 when the table is empty,
+    then last version + 1 (2 becomes 3). That tells the tablets there is new listing data. A transmission with
+    nothing to send leaves the version alone. It never blocks a transmission: if `listing_version` is missing or
+    can't be updated, the data is still sent and the alert says the version wasn't raised.
 - **Add a record**: one respondent on a form.
   - Names, area and address are saved in capitals and email in lower case.
   - Contact numbers are saved as digits. A 9xxxxxxxxx number that lost its leading 0 in Excel becomes 09xxxxxxxxx.
   - Latitude and longitude are range-checked.
-  - **SWS_MEMBER_NO identifies a record**, so it can only be used once.
+  - **IDENTIFIER1 + IDENTIFIER2 + IDENTIFIER3 + SWS_MEMBER_NO together identify a record**, so the same member no.
+    can be used in different households, but not twice in the same one.
 - **Upload file**: the SWS template as **CSV or Excel (.xlsx)**, up to 5,000 rows.
   - The first row must be the variable names. The SWS transmission file itself can be uploaded as it is.
-  - Rows are checked first. An SWS_MEMBER_NO that's already here updates that record; anything else is added.
+  - Rows are checked first. A row whose identifiers and SWS_MEMBER_NO are already here updates that record; anything else is added.
   - Download the template with the **SWS template** button, or from `/sws/template`.
 - Like F11, records are never deleted, only edited. Who added or edited each record, by form or upload, is shown
   beside it, and **History** lists every change as before → after. The history is stored in `sws_activities` and

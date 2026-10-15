@@ -222,10 +222,13 @@ final class Survey
             }
         }
 
-        // Tables made before a column was added get it now
+        // Tables made before a column or key was added get it now
         if ($schema->hasTable('sws_data') && !$schema->hasColumn('sws_data', 'transmitted')) {
             $schema->table('sws_data', fn (Blueprint $t) => self::swsTransmittedColumns($t));
             $created[] = 'sws_data.transmitted';
+        }
+        if ($schema->hasTable('sws_data') && self::rekeySwsData(self::db()) !== []) {
+            $created[] = 'sws_data key (identifiers 1-3 + sws_member_no)';
         }
 
         self::flush();
@@ -243,7 +246,7 @@ final class Survey
         foreach (['city', 'district', 'barangay', 'identifier1', 'identifier2', 'identifier3'] as $c) {
             $t->string($c, 100)->nullable();
         }
-        $t->string('sws_member_no', 50)->unique('sws_data_member_unique');
+        $t->string('sws_member_no', 50);
         foreach (['lastname', 'firstname'] as $c) {
             $t->string($c, 100)->nullable();
         }
@@ -264,6 +267,52 @@ final class Survey
         $t->dateTime('created_at')->nullable();
         $t->dateTime('updated_at')->nullable();
         $t->index(['city', 'district', 'barangay'], 'sws_data_area_index');
+        // Identifiers 1-3 + member no.: the same member no. can be in more than one household
+        $t->unique(['identifier1', 'identifier2', 'identifier3', 'sws_member_no'], 'sws_data_key_unique');
+        $t->index('sws_member_no', 'sws_data_member_index');
+    }
+
+    /**
+     * Re-key a sws_data table made when SWS member no. alone was unique (here
+     * or on the live server): blank identifiers become '' so the new key holds,
+     * then the old unique index gives way to identifiers 1-3 + member no.
+     * Returns what was done, or [] when it was already keyed this way.
+     */
+    public static function rekeySwsData(ConnectionInterface $db): array
+    {
+        $schema = $db->getSchemaBuilder();
+        $indexes = collect($schema->getIndexes('sws_data'));
+        $done = [];
+
+        $hasKey = $indexes->contains(fn ($i) => $i['name'] === 'sws_data_key_unique');
+        $old = $indexes->first(fn ($i) => $i['unique'] && !$i['primary'] && array_map('strtolower', $i['columns']) === ['sws_member_no']);
+
+        if ($hasKey && !$old) {
+            return [];
+        }
+
+        foreach (['identifier1', 'identifier2', 'identifier3'] as $c) {
+            $blank = $db->table('sws_data')->whereNull($c)->update([$c => '']);
+            if ($blank) {
+                $done[] = "{$blank} blank {$c} set to ''";
+            }
+        }
+
+        $schema->table('sws_data', function (Blueprint $t) use ($hasKey, $old, $indexes) {
+            if (!$hasKey) {
+                $t->unique(['identifier1', 'identifier2', 'identifier3', 'sws_member_no'], 'sws_data_key_unique');
+            }
+            if ($old) {
+                $t->dropUnique($old['name']);
+            }
+            if (!$indexes->contains(fn ($i) => $i['name'] === 'sws_data_member_index')) {
+                $t->index('sws_member_no', 'sws_data_member_index');
+            }
+        });
+
+        $done[] = 'unique key is now identifier1 + identifier2 + identifier3 + sws_member_no' . ($old ? " (dropped {$old['name']})" : '');
+
+        return $done;
     }
 
     /** Local only: yes / no, set by a transmission and reset to no by any later change. */
