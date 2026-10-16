@@ -103,10 +103,16 @@ class F72DataTest extends TestCase
     {
         $this->actingAs($this->client);
 
+        // Overview (map first): household coverage, the SWS map, activity, what people ate
         Livewire::test(Dashboard::class)
+            ->assertSee('Household coverage')
             ->assertSee('50%')
-            ->assertSee('Researcher performance')
-            ->assertSee('enum01')
-            ->assertSee('RICE, COOKED');
+            ->assertSee('SWS households')
+            ->assertSee('Latest activity')
+            ->assertSee('Researchers · 24-hr recall')
+            ->assertSee('What people ate · by meal')
+            ->assertSee('Rice, cooked')
+            ->set('province', 'NOWHERE')
+            ->assertSee('No food lines yet in this area.');
     }
 }

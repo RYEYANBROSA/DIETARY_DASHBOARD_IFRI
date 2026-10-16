@@ -2,74 +2,163 @@
 
 namespace App\Livewire;
 
-use App\Support\Survey;
-use App\Support\SurveyStats;
-use Illuminate\Support\Facades\DB;
+use App\Support\Overview;
+use App\Support\RecallMonitor;
 use Illuminate\Support\Facades\Log;
 use Livewire\Attributes\Title;
+use Livewire\Attributes\Url;
 use Livewire\Component;
-use Livewire\WithPagination;
 
 /**
- * Landing dashboard: the survey-wide figures the old DDCS dashboard showed -
- * coverage and interview status, food recall by meal and weighing method,
- * households per municipality, and how much each field researcher recorded.
+ * Landing dashboard. Overview (map first, see Overview): the SWS households on
+ * a map coloured by 24-hr recall status, the key figures, latest activity,
+ * researcher completion and what people ate. The second tab monitors the
+ * 24-hour food recall in detail (RecallMonitor). Both share the province filter.
  */
 #[Title('Dashboard')]
 class Dashboard extends Component
 {
-    use WithPagination;
 
-    public string $researcherSearch = '';
+    /** overview | recall */
+    #[Url(except: 'overview')]
+    public string $tab = 'overview';
 
-    public function updatedResearcherSearch(): void
+    // ----- 24-hr recall monitoring filters -----
+    #[Url(except: '')]
+    public string $from = '';
+
+    #[Url(except: '')]
+    public string $to = '';
+
+    #[Url(except: '')]
+    public string $province = '';
+
+    #[Url(except: '')]
+    public string $municipality = '';
+
+    #[Url(except: '')]
+    public string $barangay = '';
+
+    #[Url(except: '')]
+    public string $researcher = '';
+
+    /** '' (both) | '1' | '2' */
+    #[Url(except: '')]
+    public string $day = '';
+
+    public function showTab(string $tab): void
     {
-        $this->resetPage('researchers');
+        $this->tab = $tab === 'recall' ? 'recall' : 'overview';
     }
 
-    /** Food lines per researcher, split by recall day; names from the survey users table when it has them. */
-    private function researchers()
+    public function updated(string $property): void
     {
-        $db = Survey::db();
-        $named = Survey::has('users') && count(array_intersect(['username', 'fn', 'ln'], Survey::columns('users'))) === 3;
-
-        return $db->table('f72 as a')
-            ->when($named, fn ($q) => $q->leftJoin('users as b', 'b.username', '=', 'a.researcher'))
-            ->select(
-                'a.researcher',
-                DB::raw($named ? 'MAX(b.fn) as fn' : 'NULL as fn'),
-                DB::raw($named ? 'MAX(b.ln) as ln' : 'NULL as ln'),
-                DB::raw("SUM(CASE WHEN a.foodrecall_day = '1' THEN 1 ELSE 0 END) as day1"),
-                DB::raw("SUM(CASE WHEN a.foodrecall_day = '2' THEN 1 ELSE 0 END) as day2"),
-                DB::raw('COUNT(*) as total'),
-            )
-            ->whereNotNull('a.researcher')->where('a.researcher', '!=', '')
-            ->when($this->researcherSearch !== '', function ($q) use ($named) {
-                $term = '%' . $this->researcherSearch . '%';
-                $q->where(fn ($w) => $w->where('a.researcher', 'like', $term)
-                    ->when($named, fn ($n) => $n->orWhere('b.fn', 'like', $term)->orWhere('b.ln', 'like', $term)));
-            })
-            ->groupBy('a.researcher')
-            ->orderByDesc('total')
-            ->paginate(10, pageName: 'researchers');
+        // Narrowing an area level clears the levels under it
+        if ($property === 'province') {
+            $this->municipality = '';
+            $this->barangay = '';
+        }
+        if ($property === 'municipality') {
+            $this->barangay = '';
+        }
+        if (!in_array($this->day, ['', '1', '2'], true)) {
+            $this->day = '';
+        }
+        foreach (['from', 'to'] as $date) {
+            if ($this->{$date} !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $this->{$date})) {
+                $this->{$date} = '';
+            }
+        }
     }
+
+    /** Drill into an area row of the monitoring table. */
+    public function drillArea(string $name): void
+    {
+        if ($this->province === '') {
+            $this->province = $name;
+        } elseif ($this->municipality === '') {
+            $this->municipality = $name;
+        } else {
+            $this->barangay = $name;
+        }
+    }
+
+    public function filterResearcher(string $name): void
+    {
+        $this->researcher = $this->researcher === $name ? '' : $name;
+    }
+
+    /** Read the 24-hr recalls from the live server again instead of the cached copy. */
+    public function refreshLive(): void
+    {
+        RecallMonitor::refresh();
+        $state = RecallMonitor::state();
+        $this->dispatch('toast', small: true, type: $state === 'ok' ? 'success' : 'error',
+            message: $state === 'ok' ? 'Live recall data refreshed.' : "The live server still can't be reached.");
+    }
+
+    public function clearRecallFilters(): void
+    {
+        $this->reset('from', 'to', 'province', 'municipality', 'barangay', 'researcher', 'day');
+    }
+
+    private function recallFilters(): array
+    {
+        return [
+            'from' => $this->from, 'to' => $this->to, 'province' => $this->province, 'municipality' => $this->municipality,
+            'barangay' => $this->barangay, 'researcher' => $this->researcher, 'day' => $this->day,
+        ];
+    }
+
+
 
     public function render()
     {
-        $stats = SurveyStats::summary();
-        $researchers = null;
+        if ($this->tab === 'recall') {
+            return $this->renderRecall();
+        }
 
-        if ($stats) {
-            try {
-                $researchers = $this->researchers();
-            } catch (\Throwable $e) {
-                Log::warning('Dashboard researchers: ' . $e->getMessage());
-            }
+        $overview = null;
+        $provinces = collect();
+        try {
+            $provinces = Overview::provinces();
+            $overview = Overview::build($this->province);
+        } catch (\Throwable $e) {
+            Log::warning('Dashboard overview: ' . $e->getMessage());
         }
 
         return view('livewire.dashboard', [
-            'stats' => $stats,
-            'researchers' => $researchers,
+            'overview' => $overview,
+            'provinces' => $provinces,
+            'canOpenF72' => auth()->user()->canAccess(\App\Support\Modules::F72),
+            'canOpenSws' => auth()->user()->canAccess(\App\Support\Modules::SWS),
+        ]);
+    }
+
+    private function renderRecall()
+    {
+        $recall = null;
+        $options = null;
+        $state = 'unreachable';
+
+        try {
+            $state = RecallMonitor::state();
+            if ($state === 'ok') {
+                $filters = $this->recallFilters();
+                $options = RecallMonitor::options($filters);
+                $recall = RecallMonitor::report($filters);
+            }
+        } catch (\Throwable $e) {
+            $state = 'unreachable';
+            Log::warning('Dashboard recall monitoring: ' . $e->getMessage());
+        }
+
+        return view('livewire.dashboard', [
+            'recall' => $recall,
+            'options' => $options,
+            'recallMissing' => $state === 'missing',
+            'recallState' => $state,
+            'recallFetchedAt' => $state === 'ok' ? RecallMonitor::fetchedAt() : null,
             'canOpenF72' => auth()->user()->canAccess(\App\Support\Modules::F72),
         ]);
     }

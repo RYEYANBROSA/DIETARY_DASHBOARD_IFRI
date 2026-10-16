@@ -30,6 +30,12 @@ return [
     |
     */
 
+    /*
+    | Where the 24-hour food recall monitoring table (f72_interview_status) is
+    | read from: the survey database for now, mysql_live once it is there.
+    */
+    'recall_monitor_connection' => env('RECALL_MONITOR_CONNECTION', 'survey'),
+
     'connections' => [
 
         'sqlite' => [

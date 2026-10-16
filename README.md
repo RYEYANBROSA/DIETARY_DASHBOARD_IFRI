@@ -34,19 +34,51 @@ to the values above, password included. See `database/seeders/DatabaseSeeder.php
 In **System Users**, administrators can switch any module on or off for each account. System Users itself is the
 exception: only administrators can have it. Administrators always have every module.
 
-### Dashboard
+### Dashboard - Overview
 
-- Headline figures:
-  - households listed and coverage (interview status 1–2 counts as covered)
-  - F11 members
-  - F72 food lines and researchers
-- Breakdowns:
-  - household interview status
-  - food lines by meal
-  - weighing method
-  - households by municipality
-  - most reported foods
-- Researcher performance: day 1 and day 2 food lines per researcher, with search.
+The Overview puts the map first. One filter at the top, **Area** (province), also carries over to the 24-hr
+recall tab.
+
+- **SWS households map.** Every household with coordinates appears on the map, coloured by its 24-hr recall
+  status: Day 1 and 2 completed, Day 1 completed, refused, or not yet visited. Each status's count is in the
+  legend. Each pin opens the household's details, with **Open in SWS** for accounts that have that module. A
+  household is matched to its recalls by identifiers 1–3 + SWS member no. Street and Satellite views are both
+  available.
+- **Key figures:**
+  - household coverage
+  - Day 1 and Day 2 recall completion (out of SWS respondents)
+  - Day 1 refusal
+  - SWS records transmitted
+- **Latest activity:** recent F11 and SWS uploads, edits and transmissions, and 24-hr recalls received.
+- **Researchers · 24-hr recall:** each researcher's Day 1 and Day 2 completion.
+- **What people ate · by meal** and **Most reported foods**, from the F72 food lines.
+
+### Dashboard - 24-hr recall monitoring
+
+A second Dashboard tab tracks the 24-hour food recall. It reads `f72_interview_status`, which the field researchers'
+tablets fill.
+
+- **Completed** = `interview_status` 1 or 2. **Refused** = 3 and above.
+- Every rate is out of the **SWS respondents** (`sws_data`) in the same area. The recall table's province /
+  municipality / barangay match `sws_data`'s city / district / barangay. A recall sent more than once counts once,
+  using its latest update.
+- **For each recall day:** completion rate, refusal rate, and how many are not yet done.
+- **Day 2 follow-up:** how many Day 1 completers have also completed Day 2.
+- **Household survey vs 24-hr recall:** completion and refusal side by side for the same area. The household
+  survey is `household_listing`, where covered = status 1–2 and refused = status 4.
+- **Recalls per day transmitted.**
+- **By researcher:** click a row to filter by that researcher.
+- **By area:** province › district › barangay. Click a row to drill down.
+- **Filters:** date transmitted (from / to), province, municipality / district, barangay, researcher, and recall
+  day.
+- **The table is read from the live server** (`RECALL_MONITOR_CONNECTION=mysql_live`); set it to `survey` to use
+  a local copy instead.
+  - Rows are read once and reused for 2 minutes, so changing filters doesn't query the live server each time.
+    **Refresh**, next to "24-hr recall from the live server · updated …", reads them again straight away.
+  - Before any query, a 3-second check on the server's port runs. If the server is out of reach, both tabs say so
+    at once, with **Try again**, instead of waiting about 30 seconds for a timeout. The rest of the Overview (map,
+    SWS, food) keeps working. A failure is remembered for a minute before the server is tried again.
+  - The test suite always uses an in-memory copy (`phpunit.xml`).
 
 ### F11 Encoding & Upload (validators)
 
