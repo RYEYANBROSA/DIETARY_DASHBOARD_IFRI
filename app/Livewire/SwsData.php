@@ -208,8 +208,12 @@ class SwsData extends Component
     private function lockedAlert(object $row): void
     {
         $when = $row->transmitted_at ? ' on ' . \Illuminate\Support\Carbon::parse($row->transmitted_at)->format('M j, Y g:i A') : '';
-        $this->dispatch('toast', type: 'warning', title: 'Cannot edit - already transmitted',
-            message: "{$row->sws_member_no} was transmitted to the live server{$when}. " . 'This record is already on the live server, so it cannot be edited here anymore.');
+        $this->dispatch(
+            'toast',
+            type: 'warning',
+            title: 'Cannot edit - already transmitted',
+            message: "{$row->sws_member_no} was transmitted to the live server{$when}. " . 'This record is already on the live server, so it cannot be edited here anymore.'
+        );
     }
 
     public function clearRecord(): void
@@ -275,7 +279,8 @@ class SwsData extends Component
     {
         $this->upload = null;
         $this->resetValidation('file');
-        $maxKb = F11Store::maxUploadKb();
+        // $maxKb = F11Store::maxUploadKb();
+        $maxKb = 51200;
 
         $check = Validator::make(['file' => $this->file], [
             'file' => ['required', 'file', 'mimes:csv,txt,xlsx', "max:{$maxKb}"],
@@ -360,8 +365,12 @@ class SwsData extends Component
 
         try {
             if (!SwsStore::liveKeyReady()) {
-                $this->dispatch('toast', type: 'error', title: 'The live server needs an update first',
-                    message: 'Its sws_data is still unique on SWS member no. alone, so households sharing a member no. would overwrite each other there. An administrator has to run "php artisan sws:live-key --apply" once; then transmit again. Nothing was sent.');
+                $this->dispatch(
+                    'toast',
+                    type: 'error',
+                    title: 'The live server needs an update first',
+                    message: 'Its sws_data is still unique on SWS member no. alone, so households sharing a member no. would overwrite each other there. An administrator has to run "php artisan sws:live-key --apply" once; then transmit again. Nothing was sent.'
+                );
 
                 return;
             }
@@ -369,15 +378,24 @@ class SwsData extends Component
             [$sent, $new, $updated, $version] = SwsStore::transmit($ids, auth()->user());
         } catch (\Throwable $e) {
             Log::error('SWS transmission failed: ' . $e->getMessage());
-            $this->dispatch('toast', type: 'error', title: 'Transmission failed',
-                message: 'The live server could not be reached or refused the data, so nothing more was marked as transmitted. Check the connection and try again. (' . Str::limit($e->getMessage(), 160) . ')');
+            $this->dispatch(
+                'toast',
+                type: 'error',
+                title: 'Transmission failed',
+                message: 'The live server could not be reached or refused the data, so nothing more was marked as transmitted. Check the connection and try again. (' . Str::limit($e->getMessage(), 160) . ')'
+            );
 
             return;
         }
 
-        $this->dispatch('toast', type: 'success', persist: true, title: 'Data transmitted',
+        $this->dispatch(
+            'toast',
+            type: 'success',
+            persist: true,
+            title: 'Data transmitted',
             message: "{$sent} SWS record(s) are now on the live server ({$new} new, {$updated} updated). "
-                . ($version ? "Listing version is now {$version}." : 'The listing version could not be updated (no listing_version table on the live server), but the data was sent.'));
+            . ($version ? "Listing version is now {$version}." : 'The listing version could not be updated (no listing_version table on the live server), but the data was sent.')
+        );
     }
 
     public function import(): void
@@ -412,12 +430,12 @@ class SwsData extends Component
     public static function filtered(array $f): Builder
     {
         return SwsStore::table()
-            ->when(($f['city'] ?? '') !== '', fn ($q) => $q->where('city', $f['city']))
-            ->when(($f['district'] ?? '') !== '', fn ($q) => $q->where('district', $f['district']))
-            ->when(($f['barangay'] ?? '') !== '', fn ($q) => $q->where('barangay', $f['barangay']))
+            ->when(($f['city'] ?? '') !== '', fn($q) => $q->where('city', $f['city']))
+            ->when(($f['district'] ?? '') !== '', fn($q) => $q->where('district', $f['district']))
+            ->when(($f['barangay'] ?? '') !== '', fn($q) => $q->where('barangay', $f['barangay']))
             ->when(($f['search'] ?? '') !== '', function ($q) use ($f) {
                 $term = '%' . $f['search'] . '%';
-                $q->where(fn ($w) => $w
+                $q->where(fn($w) => $w
                     ->where('sws_member_no', 'like', $term)
                     ->orWhere('lastname', 'like', $term)
                     ->orWhere('firstname', 'like', $term)
@@ -428,26 +446,30 @@ class SwsData extends Component
                     ->orWhere('email_address', 'like', $term)
                     ->orWhere('indexwomenname', 'like', $term));
             })
-            ->when(($f['sent'] ?? '') === 'yes', fn ($q) => $q->where('transmitted', 'yes'))
-            ->when(($f['sent'] ?? '') === 'no', fn ($q) => SwsStore::pending($q))
-            ->when(($f['coords'] ?? '') === 'missing', fn ($q) => $q->where(fn ($w) => $w
+            ->when(($f['sent'] ?? '') === 'yes', fn($q) => $q->where('transmitted', 'yes'))
+            ->when(($f['sent'] ?? '') === 'no', fn($q) => SwsStore::pending($q))
+            ->when(($f['coords'] ?? '') === 'missing', fn($q) => $q->where(fn($w) => $w
                 ->whereNull('latitude')->orWhere('latitude', '')
                 ->orWhereNull('longitude')->orWhere('longitude', '')))
             // History lives in the app's database - narrow by id, not a join
-            ->when(($f['by'] ?? '') !== '' || ($f['upload'] ?? '') !== '', fn ($q) => $q->whereIn('id', SwsChange::query()
-                ->when(($f['by'] ?? '') !== '', fn ($c) => $c->where('user_id', (int) $f['by']))
-                ->when(($f['upload'] ?? '') !== '', fn ($c) => $c->where('sws_activity_id', (int) $f['upload']))
+            ->when(($f['by'] ?? '') !== '' || ($f['upload'] ?? '') !== '', fn($q) => $q->whereIn('id', SwsChange::query()
+                ->when(($f['by'] ?? '') !== '', fn($c) => $c->where('user_id', (int) $f['by']))
+                ->when(($f['upload'] ?? '') !== '', fn($c) => $c->where('sws_activity_id', (int) $f['upload']))
                 ->distinct()->pluck('sws_id')->all()));
     }
 
     private function filterValues(): array
     {
         return array_filter([
-            'city' => $this->city, 'district' => $this->district, 'barangay' => $this->barangay,
-            'search' => $this->search, 'by' => $this->changedBy, 'upload' => $this->uploadBatch,
+            'city' => $this->city,
+            'district' => $this->district,
+            'barangay' => $this->barangay,
+            'search' => $this->search,
+            'by' => $this->changedBy,
+            'upload' => $this->uploadBatch,
             'coords' => $this->coords,
             'sent' => $this->transmitted,
-        ], fn ($v) => $v !== '');
+        ], fn($v) => $v !== '');
     }
 
     public function render()
@@ -459,7 +481,7 @@ class SwsData extends Component
             $sort = in_array($this->sort, SwsStore::SORTABLE, true) ? $this->sort : 'id';
             $rows = self::filtered($this->filterValues())
                 ->orderBy($sort, $this->dir === 'asc' ? 'asc' : 'desc')
-                ->when($sort !== 'id', fn ($q) => $q->orderBy('id'))
+                ->when($sort !== 'id', fn($q) => $q->orderBy('id'))
                 ->paginate($this->perPage);
 
             $data = [
@@ -469,7 +491,7 @@ class SwsData extends Component
                 'total' => SwsStore::table()->count(),
                 'cities' => $areas->pluck('city')->filter()->unique()->values(),
                 'districts' => $areas->where('city', $this->city)->pluck('district')->filter()->unique()->values(),
-                'barangays' => $areas->where('city', $this->city)->when($this->district !== '', fn ($c) => $c->where('district', $this->district))->pluck('barangay')->filter()->unique()->values(),
+                'barangays' => $areas->where('city', $this->city)->when($this->district !== '', fn($c) => $c->where('district', $this->district))->pluck('barangay')->filter()->unique()->values(),
                 // Suggestions for the form's area fields
                 'allCities' => $areas->pluck('city')->filter()->unique()->values(),
                 'allDistricts' => $areas->pluck('district')->filter()->unique()->values(),
@@ -519,8 +541,25 @@ class SwsData extends Component
             ->whereNotNull('longitude')->where('longitude', '!=', '')
             ->orderBy('id')
             ->limit(self::MAP_LIMIT)
-            ->get(['id', 'latitude', 'longitude', 'sws_member_no', 'lastname', 'firstname', 'middlename', 'suffix',
-                'floor_no', 'building_no', 'block', 'street_name', 'subd', 'barangay', 'district', 'city', 'contact_number'])
+            ->get([
+                'id',
+                'latitude',
+                'longitude',
+                'sws_member_no',
+                'lastname',
+                'firstname',
+                'middlename',
+                'suffix',
+                'floor_no',
+                'building_no',
+                'block',
+                'street_name',
+                'subd',
+                'barangay',
+                'district',
+                'city',
+                'contact_number'
+            ])
             ->each(function ($r) use (&$points, &$outside) {
                 if (!is_numeric($r->latitude) || !is_numeric($r->longitude)) {
                     return;
@@ -531,7 +570,10 @@ class SwsData extends Component
                     $outside++;
                 }
                 $points[] = [
-                    $r->id, round($lat, 7), round($lng, 7), $r->sws_member_no,
+                    $r->id,
+                    round($lat, 7),
+                    round($lng, 7),
+                    $r->sws_member_no,
                     trim("{$r->lastname}, {$r->firstname} {$r->middlename} {$r->suffix}"),
                     collect([$r->floor_no, $r->building_no, $r->block, $r->street_name, $r->subd])->filter()->implode(', '),
                     collect([$r->barangay, $r->district, $r->city])->filter()->implode(', '),

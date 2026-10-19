@@ -23,6 +23,27 @@ final class F11Store
      * upload_max_filesize / post_max_size are lower (8 MB on a stock WAMP).
      * Past that limit PHP drops the file before Livewire sees it.
      */
+    public static function maxUploadKbOLD(): int
+    {
+        $toKb = function (string $value): int {
+            $value = trim($value);
+            $number = (float) $value;
+
+            return (int) match (strtolower(substr($value, -1))) {
+                'g' => $number * 1024 * 1024,
+                'm' => $number * 1024,
+                'k' => $number,
+                default => $number / 1024,
+            };
+        };
+
+        $limits = array_filter([10240, $toKb((string) ini_get('upload_max_filesize')), $toKb((string) ini_get('post_max_size')) - 64], fn($kb) => $kb > 0);
+
+        return (int) min($limits);
+    }
+
+
+
     public static function maxUploadKb(): int
     {
         $toKb = function (string $value): int {
@@ -37,10 +58,18 @@ final class F11Store
             };
         };
 
-        $limits = array_filter([10240, $toKb((string) ini_get('upload_max_filesize')), $toKb((string) ini_get('post_max_size')) - 64], fn ($kb) => $kb > 0);
+        // Maximum application limit: 25 MB
+        $maxUploadKb = 25 * 1024;
+
+        $limits = array_filter([
+            $maxUploadKb,
+            $toKb((string) ini_get('upload_max_filesize')),
+            $toKb((string) ini_get('post_max_size')) - 64,
+        ], fn($kb) => $kb > 0);
 
         return (int) min($limits);
     }
+
 
     /**
      * Every province / municipality / barangay an F11 record can be placed in:
@@ -70,7 +99,7 @@ final class F11Store
             ->whereNotNull('province')->where('province', '!=', '')
             ->orderBy('province')->orderBy('municipality')->orderBy('barangay')
             ->get()
-            ->map(fn ($row) => (array) $row);
+            ->map(fn($row) => (array) $row);
     }
 
     /** Area keys an upload is checked against, or null when there is no area list to check. */
@@ -99,7 +128,7 @@ final class F11Store
     {
         return Survey::db()->table('f11')
             ->where($key)
-            ->when($exceptId, fn ($q) => $q->where('id', '!=', $exceptId))
+            ->when($exceptId, fn($q) => $q->where('id', '!=', $exceptId))
             ->first();
     }
 
@@ -165,7 +194,7 @@ final class F11Store
         }
 
         $existing = self::existingKeys($records);
-        $updates = count(array_filter($records, fn ($r) => isset($existing[implode('|', F11Record::key($r))])));
+        $updates = count(array_filter($records, fn($r) => isset($existing[implode('|', F11Record::key($r))])));
 
         return [
             'records' => $records,
@@ -204,7 +233,7 @@ final class F11Store
             }
         });
 
-        $areas = collect($records)->map(fn ($r) => $r['barangay'] . ', ' . $r['municipality'])->unique();
+        $areas = collect($records)->map(fn($r) => $r['barangay'] . ', ' . $r['municipality'])->unique();
 
         $upload = F11Activity::create([
             'user_id' => $user->id,
@@ -216,7 +245,7 @@ final class F11Store
         ]);
 
         foreach (array_chunk($history, 500) as $chunk) {
-            F11Change::insert(array_map(fn ($h) => self::changeRow($user, $h[0], $h[1], 'upload', $h[2], $h[3], $upload->id), $chunk));
+            F11Change::insert(array_map(fn($h) => self::changeRow($user, $h[0], $h[1], 'upload', $h[2], $h[3], $upload->id), $chunk));
         }
 
         return [$inserted, $updated];
@@ -244,7 +273,7 @@ final class F11Store
             return [[], 'The file is empty.'];
         }
 
-        $header = array_map(fn ($h) => strtolower(trim(preg_replace('/^\xEF\xBB\xBF/', '', (string) $h))), $header);
+        $header = array_map(fn($h) => strtolower(trim(preg_replace('/^\xEF\xBB\xBF/', '', (string) $h))), $header);
         $missing = array_diff(F11Record::COLUMNS, $header);
         if ($missing !== []) {
             fclose($handle);
@@ -256,7 +285,7 @@ final class F11Store
         $line = 1;
         while (($cells = fgetcsv($handle, null, $delimiter, '"', '')) !== false) {
             $line++;
-            if (count(array_filter($cells, fn ($c) => trim((string) $c) !== '')) === 0) {
+            if (count(array_filter($cells, fn($c) => trim((string) $c) !== '')) === 0) {
                 continue; // blank line
             }
             if (count($rows) >= self::MAX_ROWS) {
@@ -297,15 +326,15 @@ final class F11Store
     private static function existingKeys(array $records): array
     {
         $areas = collect($records)
-            ->map(fn ($r) => ['province' => $r['province'], 'municipality' => $r['municipality'], 'barangay' => $r['barangay']])
-            ->unique(fn ($a) => implode('|', $a));
+            ->map(fn($r) => ['province' => $r['province'], 'municipality' => $r['municipality'], 'barangay' => $r['barangay']])
+            ->unique(fn($a) => implode('|', $a));
 
         $keys = [];
         foreach ($areas as $area) {
             Survey::db()->table('f11')->where($area)->orderBy('id')
                 ->each(function ($row) use (&$keys) {
                     $row = (array) $row;
-                    $values = array_map(fn ($c) => (string) ($row[$c] ?? ''), F11Record::KEY);
+                    $values = array_map(fn($c) => (string) ($row[$c] ?? ''), F11Record::KEY);
                     $keys[implode('|', $values)] = $row;
                 });
         }
@@ -341,7 +370,7 @@ final class F11Store
     private static function changeRow(User $user, int $id, string $action, string $source, array $record, ?array $changes, ?int $uploadId = null): array
     {
         $household = collect([$record['identifier1'] ?? '', $record['identifier2'] ?? '', $record['identifier3'] ?? ''])
-            ->filter(fn ($v) => $v !== '' && $v !== null)->implode('-');
+            ->filter(fn($v) => $v !== '' && $v !== null)->implode('-');
 
         return [
             'f11_id' => $id,
@@ -359,7 +388,7 @@ final class F11Store
     private static function log(User $user, string $action, array $record, int $id): void
     {
         $household = collect([$record['identifier1'] ?? '', $record['identifier2'] ?? '', $record['identifier3'] ?? ''])
-            ->filter(fn ($v) => $v !== '' && $v !== null)->implode('-');
+            ->filter(fn($v) => $v !== '' && $v !== null)->implode('-');
 
         F11Activity::create([
             'user_id' => $user->id,
