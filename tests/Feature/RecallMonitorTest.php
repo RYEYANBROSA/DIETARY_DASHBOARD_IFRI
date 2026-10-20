@@ -143,6 +143,53 @@ class RecallMonitorTest extends TestCase
             ->assertSet('municipality', '');
     }
 
+    public function test_each_household_shows_its_day_1_and_day_2_recall(): void
+    {
+        $this->seedRecalls();
+        $rows = RecallMonitor::households(self::BLANK)->keyBy('sws_member_no');
+
+        // Only households that have transmitted a status: members 1-7 (8-10 have none)
+        $this->assertCount(7, $rows);
+        $this->assertSame(['QUEZON CITY', 'DISTRICT 1', 'PALTOK'], [$rows['SWS_7']['city'], $rows['SWS_7']['district'], $rows['SWS_7']['barangay']]);
+        // Member 1: both days completed
+        $this->assertSame('complete', $rows['SWS_1']['completion']);
+        $this->assertSame(['status' => '1', 'outcome' => 'completed', 'date' => '2026-10-14', 'researcher' => 'DR_001'], $rows['SWS_1']['days']['1']);
+        $this->assertSame('2026-10-16', $rows['SWS_1']['days']['2']['date']);
+        // Member 3: Day 1 completed, Day 2 refused (status 5)
+        $this->assertSame('refused', $rows['SWS_3']['completion']);
+        $this->assertSame('5', $rows['SWS_3']['days']['2']['status']);
+        // Member 4: Day 1 only; member 7 re-sent - the latest (completed) counts
+        $this->assertSame('partial', $rows['SWS_4']['completion']);
+        $this->assertSame('partial', $rows['SWS_7']['completion']);
+        // Member 4 has no Day 2 recall yet; members 8-10 sent nothing, so they aren't listed
+        $this->assertNull($rows['SWS_4']['days']['2']);
+        $this->assertArrayNotHasKey('SWS_9', $rows->all());
+
+        // A status sent for a household not in SWS data is still listed, without a name
+        $this->recall(99, '1', '1', 'DR_003', '2026-10-16');
+        \Illuminate\Support\Facades\Cache::flush();
+        $stray = RecallMonitor::households(self::BLANK)->firstWhere('sws_member_no', 'SWS_99');
+        $this->assertFalse($stray['inSws']);
+        $this->assertSame('', $stray['lastname']);
+        $this->assertTrue(RecallMonitor::households(self::BLANK)->firstWhere('sws_member_no', 'SWS_1')['inSws']);
+
+        // A researcher filter lists only that researcher's households
+        $this->assertSame(['SWS_1', 'SWS_2', 'SWS_5'], RecallMonitor::households([...self::BLANK, 'researcher' => 'DR_001'])->pluck('sws_member_no')->all());
+        // Search and completion filter
+        $this->assertSame(['SWS_4'], RecallMonitor::households(self::BLANK, 'SWS_4')->pluck('sws_member_no')->all());
+        $this->assertSame(['SWS_3', 'SWS_5', 'SWS_6'], RecallMonitor::households(self::BLANK, '', 'refused')->pluck('sws_member_no')->all());
+
+        $this->actingAs(User::factory()->create());
+        Livewire::test(Dashboard::class)
+            ->call('showTab', 'recall')
+            ->assertSee('By household')
+            ->assertSee('SWS_4')
+            ->call('filterHouseholds', 'complete')
+            ->assertSet('hhStatus', 'complete')
+            ->assertSee('SWS_2')
+            ->assertDontSee('SWS_4');
+    }
+
     public function test_rows_are_cached_until_refreshed(): void
     {
         $this->seedRecalls();

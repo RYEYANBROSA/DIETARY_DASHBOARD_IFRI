@@ -205,6 +205,80 @@ final class RecallMonitor
         ];
     }
 
+    /** Household completion: both days completed, one day completed, any refusal, no completed recall yet. */
+    public const HOUSEHOLD_STATUSES = [
+        'complete' => 'Completed',
+        'partial' => '1 of 2 days',
+        'refused' => 'Refused',
+        'notyet' => 'Not yet',
+    ];
+
+    /**
+     * One row per household that has transmitted a status to
+     * f72_interview_status (identifiers 1-3 + SWS member no.), with its latest
+     * Day 1 and Day 2 recall: status, outcome, date transmitted and researcher,
+     * and the household's completion (HOUSEHOLD_STATUSES). The area is the
+     * recall's own; the name comes from the matching SWS record, as the recall
+     * table has none. Every filter applies; $search matches the identifiers,
+     * SWS member no. and name, and $status narrows to one completion.
+     */
+    public static function households(array $f, string $search = '', string $status = ''): Collection
+    {
+        $households = [];
+        foreach (self::recalls($f) as $r) {
+            $households[$r['sws']]['ids'] = $r['ids'];
+            $households[$r['sws']]['area'] = $r['area'];
+            $households[$r['sws']]['days'][$r['day']] = $r;
+        }
+        if ($households === []) {
+            return collect();
+        }
+
+        $names = SwsStore::table()->get(['identifier1', 'identifier2', 'identifier3', 'sws_member_no', 'lastname', 'firstname'])
+            ->keyBy(fn ($r) => SwsRecord::keyOf($r));
+        $search = strtoupper(trim($search));
+
+        return collect($households)
+            ->map(function ($hh, $key) use ($names) {
+                $sws = $names[$key] ?? null;
+                $row = [
+                    'key' => $key,
+                    'city' => $hh['area'][0], 'district' => $hh['area'][1], 'barangay' => $hh['area'][2],
+                    'identifier1' => $hh['ids'][0], 'identifier2' => $hh['ids'][1], 'identifier3' => $hh['ids'][2], 'sws_member_no' => $hh['ids'][3],
+                    'lastname' => (string) ($sws->lastname ?? ''), 'firstname' => (string) ($sws->firstname ?? ''),
+                    'inSws' => $sws !== null,
+                ];
+                foreach (self::DAYS as $day => $label) {
+                    $r = $hh['days'][$day] ?? null;
+                    $row['days'][$day] = $r ? ['status' => $r['status'], 'outcome' => $r['outcome'], 'date' => $r['date'], 'researcher' => $r['researcher']] : null;
+                }
+                $row['completion'] = self::householdStatus($row['days']);
+
+                return $row;
+            })
+            ->when($search !== '', fn ($c) => $c->filter(fn ($row) => str_contains(strtoupper(implode(' ', [
+                $row['identifier1'], $row['identifier2'], $row['identifier3'], $row['sws_member_no'], $row['lastname'], $row['firstname'],
+            ])), $search)))
+            ->when(isset(self::HOUSEHOLD_STATUSES[$status]), fn ($c) => $c->where('completion', $status))
+            ->sortBy(fn ($row) => implode('|', [$row['city'], $row['district'], $row['barangay'], $row['identifier1'], $row['identifier2'], $row['identifier3'], $row['sws_member_no']]))
+            ->values();
+    }
+
+    /** complete | partial | refused | notyet, from a household's Day 1 / Day 2 recalls. */
+    private static function householdStatus(array $days): string
+    {
+        $outcomes = array_map(fn ($d) => $d['outcome'] ?? null, $days);
+
+        if (in_array('refused', $outcomes, true)) {
+            return 'refused';
+        }
+        if (($outcomes['1'] ?? null) === 'completed' && ($outcomes['2'] ?? null) === 'completed') {
+            return 'complete';
+        }
+
+        return in_array('completed', $outcomes, true) ? 'partial' : 'notyet';
+    }
+
     /**
      * Each SWS respondent's latest outcome per recall day, keyed like
      * SwsRecord::keyOf(): ['QC001|QC001|QC001|SWS_001' => ['1' => 'completed', '2' => 'refused']].
@@ -263,7 +337,9 @@ final class RecallMonitor
                 'member' => implode('|', [$r->identifier1, $r->identifier2, $r->identifier3, $r->sws_member_no, $r->member_no]),
                 // Same shape as SwsRecord::keyOf(), to find the SWS respondent the recall belongs to
                 'sws' => implode('|', [(string) $r->identifier1, (string) $r->identifier2, (string) $r->identifier3, (string) $r->sws_member_no]),
+                'ids' => [(string) $r->identifier1, (string) $r->identifier2, (string) $r->identifier3, (string) $r->sws_member_no],
                 'day' => trim((string) $r->foodrecall_day),
+                'status' => trim((string) $r->interview_status),
                 'outcome' => self::outcome($r->interview_status),
                 'researcher' => (string) $r->researcher,
                 'area' => [strtoupper((string) $r->province), strtoupper((string) $r->municipality), strtoupper((string) $r->barangay)],

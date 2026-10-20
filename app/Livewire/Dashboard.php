@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
+use Livewire\WithPagination;
 
 /**
  * Landing dashboard. Overview (map first, see Overview): the SWS households on
@@ -18,6 +19,10 @@ use Livewire\Component;
 #[Title('Dashboard')]
 class Dashboard extends Component
 {
+    use WithPagination;
+
+    /** Households per page in the recall tab's "By household" table. */
+    public const HOUSEHOLDS_PER_PAGE = 25;
 
     /** overview | recall */
     #[Url(except: 'overview')]
@@ -46,6 +51,14 @@ class Dashboard extends Component
     #[Url(except: '')]
     public string $day = '';
 
+    // ----- "By household" table -----
+    #[Url(as: 'hh', except: '')]
+    public string $hhSearch = '';
+
+    /** '' | a RecallMonitor::HOUSEHOLD_STATUSES key */
+    #[Url(as: 'hhstatus', except: '')]
+    public string $hhStatus = '';
+
     public function showTab(string $tab): void
     {
         $this->tab = $tab === 'recall' ? 'recall' : 'overview';
@@ -64,6 +77,11 @@ class Dashboard extends Component
         if (!in_array($this->day, ['', '1', '2'], true)) {
             $this->day = '';
         }
+        if (!isset(RecallMonitor::HOUSEHOLD_STATUSES[$this->hhStatus])) {
+            $this->hhStatus = '';
+        }
+        // Any filter change starts the household list again from page 1
+        $this->resetPage('hhpage');
         foreach (['from', 'to'] as $date) {
             if ($this->{$date} !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $this->{$date})) {
                 $this->{$date} = '';
@@ -86,6 +104,13 @@ class Dashboard extends Component
     public function filterResearcher(string $name): void
     {
         $this->researcher = $this->researcher === $name ? '' : $name;
+        $this->resetPage('hhpage');
+    }
+
+    public function filterHouseholds(string $status): void
+    {
+        $this->hhStatus = $this->hhStatus === $status || !isset(RecallMonitor::HOUSEHOLD_STATUSES[$status]) ? '' : $status;
+        $this->resetPage('hhpage');
     }
 
     /** Read the 24-hr recalls from the live server again instead of the cached copy. */
@@ -99,7 +124,8 @@ class Dashboard extends Component
 
     public function clearRecallFilters(): void
     {
-        $this->reset('from', 'to', 'province', 'municipality', 'barangay', 'researcher', 'day');
+        $this->reset('from', 'to', 'province', 'municipality', 'barangay', 'researcher', 'day', 'hhSearch', 'hhStatus');
+        $this->resetPage('hhpage');
     }
 
     private function recallFilters(): array
@@ -139,6 +165,8 @@ class Dashboard extends Component
     {
         $recall = null;
         $options = null;
+        $households = null;
+        $householdCounts = null;
         $state = 'unreachable';
 
         try {
@@ -147,6 +175,16 @@ class Dashboard extends Component
                 $filters = $this->recallFilters();
                 $options = RecallMonitor::options($filters);
                 $recall = RecallMonitor::report($filters);
+
+                // Counts per completion (before the status filter), then the page of rows
+                $all = RecallMonitor::households($filters, $this->hhSearch);
+                $householdCounts = $all->countBy('completion')->all();
+                $list = $this->hhStatus !== '' ? $all->where('completion', $this->hhStatus)->values() : $all;
+                $page = $this->getPage('hhpage');
+                $households = new \Illuminate\Pagination\LengthAwarePaginator(
+                    $list->forPage($page, self::HOUSEHOLDS_PER_PAGE)->values(), $list->count(), self::HOUSEHOLDS_PER_PAGE, $page,
+                    ['pageName' => 'hhpage'],
+                );
             }
         } catch (\Throwable $e) {
             $state = 'unreachable';
@@ -156,6 +194,8 @@ class Dashboard extends Component
         return view('livewire.dashboard', [
             'recall' => $recall,
             'options' => $options,
+            'households' => $households,
+            'householdCounts' => $householdCounts,
             'recallMissing' => $state === 'missing',
             'recallState' => $state,
             'recallFetchedAt' => $state === 'ok' ? RecallMonitor::fetchedAt() : null,

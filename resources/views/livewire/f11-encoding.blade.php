@@ -8,15 +8,20 @@
     $actionLabel = ['created' => 'Added', 'updated' => 'Edited'];
 @endphp
 <div class="flex flex-col gap-6">
-    <x-page-header title="F11 Encoding & Upload" subtitle="Encode household members one at a time, or upload a batch from the CSV template">
-        <a href="{{ route('f11.template') }}" class="flex h-11 items-center gap-2 rounded-[11px] border border-field bg-white px-4 text-sm font-bold text-ink-soft hover:border-green-700">
-            <x-icon name="download" size="18" /> CSV template
-        </a>
+    <x-page-header title="F11 Membership" subtitle="{{ $editing ? 'Encode household members one at a time, or upload a batch from the CSV template' : 'Household members from the field tablets - view each member and its history' }}">
+        {{-- CSV template hidden while F11 is view-only (F11Encoding::$editing) --}}
+        @if ($editing)
+            <a href="{{ route('f11.template') }}" class="flex h-11 items-center gap-2 rounded-[11px] border border-field bg-white px-4 text-sm font-bold text-ink-soft hover:border-green-700">
+                <x-icon name="download" size="18" /> CSV template
+            </a>
+        @endif
     </x-page-header>
 
     @if ($offline)
         <x-survey-offline />
     @else
+        {{-- Encode / Upload tabs hidden while F11 is view-only --}}
+        @if ($editing)
         <nav class="flex flex-wrap gap-1 rounded-[14px] border border-line bg-white p-1.5" aria-label="F11 sections">
             @foreach ($tabs as $key => $label)
                 <button type="button" wire:click="showTab('{{ $key }}')" @if ($tab === $key) aria-current="page" @endif
@@ -26,8 +31,9 @@
                 </button>
             @endforeach
         </nav>
+        @endif
 
-        <section class="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <section class="grid grid-cols-1 items-start gap-4 {{ $editing ? 'xl:grid-cols-[minmax(0,1fr)_320px]' : '' }}">
             <div class="flex min-w-0 flex-col gap-4">
                 {{-- ===== Records ===== --}}
                 @if ($tab === 'records')
@@ -51,6 +57,8 @@
                                     @foreach ($filterBarangays as $option)<option value="{{ $option }}">{{ $option }}</option>@endforeach
                                 </select>
                             </label>
+                            {{-- Added / edited by and Upload filters hidden while F11 is view-only --}}
+                            @if ($editing)
                             <label class="flex flex-col gap-1.5 text-[12.5px] font-semibold text-ink-soft">Added / edited by
                                 <select wire:model.live="changedBy" class="{{ $filterSelect }}">
                                     <option value="">Anyone</option>
@@ -63,6 +71,7 @@
                                     @foreach ($uploads as $batch)<option value="{{ $batch->id }}">{{ $batch->subject }} · {{ $batch->created_at->format('M j, g:i A') }}</option>@endforeach
                                 </select>
                             </label>
+                            @endif
                             <label class="flex min-w-0 flex-[1_1_200px] flex-col gap-1.5 text-[12.5px] font-semibold text-ink-soft">Search
                                 <input type="search" wire:model.live.debounce.400ms="search" placeholder="Name, household, SWS member no." class="h-[42px] min-w-0 rounded-[10px] border border-field px-3 text-sm font-normal text-ink outline-none focus:border-green-700">
                             </label>
@@ -114,7 +123,9 @@
                                             </td>
                                             <td class="px-3.5 py-3 text-right whitespace-nowrap">
                                                 <button type="button" wire:click="showHistory({{ $row->id }})" class="inline-flex h-9 items-center rounded-lg px-2 text-[12.5px] font-bold text-ink-soft hover:bg-green-50 hover:text-green-800" aria-label="History of {{ $row->surname }}, {{ $row->givenname }}">History</button>
-                                                <button type="button" wire:click="edit({{ $row->id }})" class="inline-flex size-9 items-center justify-center rounded-lg text-ink-soft hover:bg-green-50 hover:text-green-800" aria-label="Edit {{ $row->surname }}, {{ $row->givenname }}"><x-icon name="edit" size="18" /></button>
+                                                @if ($editing)
+                                                    <button type="button" wire:click="edit({{ $row->id }})" class="inline-flex size-9 items-center justify-center rounded-lg text-ink-soft hover:bg-green-50 hover:text-green-800" aria-label="Edit {{ $row->surname }}, {{ $row->givenname }}"><x-icon name="edit" size="18" /></button>
+                                                @endif
                                             </td>
                                         </tr>
                                     @empty
@@ -383,7 +394,8 @@
                 @endif
             </div>
 
-            {{-- Activity trail --}}
+            {{-- Activity trail - hidden while F11 is view-only --}}
+            @if ($editing)
             <aside class="flex flex-col gap-3 rounded-2xl border border-line bg-white p-5">
                 <h2 class="text-[17px] font-bold">Recent F11 activity</h2>
                 @forelse ($activities as $activity)
@@ -413,6 +425,7 @@
                     </div>
                 @endforelse
             </aside>
+            @endif
         </section>
 
         {{-- Member history --}}

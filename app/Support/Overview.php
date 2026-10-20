@@ -19,10 +19,11 @@ final class Overview
 
     /** Map status => [label, colour], in legend order. */
     public const STATUSES = [
-        'both' => ['Day 1 and 2 completed', '#14532D'],
-        'day1' => ['Day 1 completed', '#22A355'],
-        'refused' => ['Refused', '#E24B4A'],
-        'notyet' => ['Not yet visited', '#A8B3AC'],
+        // Map pins: green = completed (deeper for both days), red = refused, gray = not yet
+        'both' => ['Day 1 and 2 completed', '#15803D'],
+        'day1' => ['Day 1 completed', '#4ADE80'],
+        'refused' => ['Refused', '#DC2626'],
+        'notyet' => ['Not yet visited', '#9CA3AF'],
     ];
 
     public static function build(string $province): array

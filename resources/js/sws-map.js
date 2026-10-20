@@ -4,6 +4,8 @@
  * points are rows [id, lat, lng, memberNo, name, address, area, contact].
  * Leaflet is loaded on first use, so other pages don't download it.
  */
+import { pinIcon, satelliteLayers } from './map-pin';
+
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 window.swsMap = (points, focusId) => ({
@@ -13,19 +15,10 @@ window.swsMap = (points, focusId) => ({
     async init() {
         const [{ default: L }] = await Promise.all([import('leaflet'), import('leaflet/dist/leaflet.css')]);
 
-        // Circle markers on a canvas stay fast with thousands of households and need no marker images
-        this.map = L.map(this.$refs.map, { preferCanvas: true, zoomControl: true });
+        this.map = L.map(this.$refs.map, { zoomControl: true });
 
-        const street = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        });
-        const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            maxZoom: 19,
-            attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
-        });
-        street.addTo(this.map);
-        L.control.layers({ Street: street, Satellite: satellite }, null, { position: 'topright' }).addTo(this.map);
+        // Always satellite
+        satelliteLayers(L, this.map);
         L.control.scale({ imperial: false }).addTo(this.map);
 
         // Households at exactly the same spot share one marker, so none hides under another
@@ -43,12 +36,10 @@ window.swsMap = (points, focusId) => ({
             const [, lat, lng] = households[0];
             const isFocus = households.some((h) => h[0] === focusId);
             const shared = households.length > 1;
-            const marker = L.circleMarker([lat, lng], {
-                radius: isFocus ? 10 : shared ? 8 : 6,
-                color: shared ? '#0F3D2E' : '#FFFFFF',
-                weight: shared ? 2.5 : 1.5,
-                fillColor: isFocus ? '#B45309' : '#15803D',
-                fillOpacity: 0.9,
+            // Green balloon pins; the record being looked at is a bigger amber pin, and a shared spot shows its count
+            const marker = L.marker([lat, lng], {
+                icon: pinIcon(L, isFocus ? '#D97706' : '#16A34A', { size: isFocus ? 40 : 30, count: households.length }),
+                zIndexOffset: isFocus ? 1000 : 0,
             }).addTo(this.map);
 
             const entries = households.map(([id, , , memberNo, name, address, area, contact]) => `
@@ -72,7 +63,7 @@ window.swsMap = (points, focusId) => ({
                 </div>`,
                 { maxWidth: 300, maxHeight: 320 },
             );
-            if (shared) marker.bindTooltip(`${households.length} households`, { direction: 'top', offset: [0, -8] });
+            if (shared) marker.bindTooltip(`${households.length} households`, { direction: 'top' });
             bounds.push([lat, lng]);
             if (isFocus) focused = marker;
         }

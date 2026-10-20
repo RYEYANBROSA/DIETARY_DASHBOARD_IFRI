@@ -31,9 +31,15 @@ class ValidationMessagesTest extends TestCase
             $this->assertSame(['This field is required.'], $users->errors()->get($field), $field);
         }
 
-        $f11 = Livewire::test(F11Encoding::class)->call('save');
-        foreach (['member.province', 'member.surname', 'member.sex'] as $field) {
-            $this->assertSame(['This field is required.'], $f11->errors()->get($field), $field);
+        // F11 encoding is switched off for now; check its messages with it on
+        F11Encoding::$editing = true;
+        try {
+            $f11 = Livewire::test(F11Encoding::class)->call('save');
+            foreach (['member.province', 'member.surname', 'member.sex'] as $field) {
+                $this->assertSame(['This field is required.'], $f11->errors()->get($field), $field);
+            }
+        } finally {
+            F11Encoding::$editing = false;
         }
     }
 

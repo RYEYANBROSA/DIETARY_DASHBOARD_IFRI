@@ -1,9 +1,9 @@
 # Dietary Dashboard (DOST-FNRI)
 
 A web dashboard for the DOST-FNRI dietary survey (DDCS). It replaces the old `ddcs_dashboard`.
-
+- Validators view **F11** household members (F11 Membership - view-only for now).
 - Validators encode or upload **F11** household members.
-- Clients and administrators review **F72** food recall data, survey coverage and downloads.
+- Administrators (and clients they give F72 to in System Users) review **F72** food recall data, survey coverage and downloads.
 
 Built with Laravel 12, Livewire 3 and Tailwind CSS 4, using design Option A (forest-green sidebar).
 
@@ -15,7 +15,7 @@ Built with Laravel 12, Livewire 3 and Tailwind CSS 4, using design Option A (for
 |---|---|---|
 | `admin@dietary.test` | Administrator | Dashboard, F11, F72, My Profile, System Users |
 | `validator@dietary.test` | Validator | Dashboard, F11, SWS Upload Data, My Profile |
-| `client@dietary.test` | Client | Dashboard, F72, My Profile |
+| `client@dietary.test` | Client | Dashboard, My Profile |
 
 The seeder only runs when `APP_ENV=local`, so these accounts never reach production. Running it again resets them
 to the values above, password included. See `database/seeders/DatabaseSeeder.php`.
@@ -25,9 +25,9 @@ to the values above, password included. See `database/seeders/DatabaseSeeder.php
 | Module | Administrator | Validator | Client | What it does |
 |---|---|---|---|---|
 | Dashboard | ✓ | ✓ | ✓ | Survey-wide figures and researcher performance |
-| F11 Encoding & Upload | ✓ | ✓ | | Encode / upload household members (`f11`) |
+| F11 Membership | ✓ | ✓ | | View household members and their history (`f11`) - view-only for now |
 | SWS Upload Data | ✓ | ✓ | | Add / edit / upload SWS transmission records, view all of them (`sws_data`) |
-| F72 Food Recall | ✓ | | ✓ | Read-only coverage, households, recalls, food lines, downloads (`f72`) |
+| F72 Food Recall | ✓ | | | Read-only coverage, households, recalls, food lines, downloads (`f72`) |
 | My Profile | ✓ | ✓ | ✓ | Own name, mobile number, password |
 | System Users | ✓ | | | Add accounts, set levels, switch modules on/off |
 
@@ -68,6 +68,7 @@ tablets fill.
   survey is `household_listing`, where covered = status 1–2 and refused = status 4.
 - **Recalls per day transmitted.**
 - **By researcher:** click a row to filter by that researcher.
+- **By household:** every household that has transmitted a status to `f72_interview_status` (one row per identifiers 1-3 + SWS member no.; area from the recall, name from the matching SWS record, or "Not in SWS data") with its latest Day 1 and Day 2 recall - outcome, interview status code, date transmitted and researcher - and the household completion: **Completed** (both days completed), **1 of 2 days**, **Refused** (either day status 3+), **Not yet**. Click a completion chip to list only those, search by identifier, SWS member no. or name; 25 per page. All the filters apply.
 - **By area:** province › district › barangay. Click a row to drill down.
 - **Filters:** date transmitted (from / to), province, municipality / district, barangay, researcher, and recall
   day.
@@ -80,7 +81,11 @@ tablets fill.
     SWS, food) keeps working. A failure is remembered for a minute before the server is tried again.
   - The test suite always uses an in-memory copy (`phpunit.xml`).
 
-### F11 Encoding & Upload (validators)
+### F11 Membership (validators)
+
+> **View-only for now.** Encoding, editing, CSV upload, the CSV template button and the Recent F11 activity panel
+> are switched off; the page lists the members with their filters and each member's **History**. The code is kept:
+> set `F11Encoding::$editing = true` (`app/Livewire/F11Encoding.php`) to bring it all back as described below.
 
 - **Encoded members**: list every member with area filters and search, and edit one. **Members are never deleted**:
   a wrong record is corrected by editing it, and every edit is kept in its history.

@@ -50,7 +50,7 @@ class AuthTest extends TestCase
         $user = User::where('email', 'juan@example.com')->firstOrFail();
 
         $this->assertSame(UserLevel::Client, $user->level);
-        $this->assertSame([Modules::DASHBOARD, Modules::F72, Modules::PROFILE], $user->modules);
+        $this->assertSame([Modules::DASHBOARD, Modules::PROFILE], $user->modules);
         $this->assertNull($user->email_verified_at);
         $this->assertAuthenticatedAs($user);
         Notification::assertSentTo($user, VerifyEmailNotification::class);

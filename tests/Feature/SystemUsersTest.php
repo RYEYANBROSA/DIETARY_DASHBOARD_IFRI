@@ -125,8 +125,9 @@ class SystemUsersTest extends TestCase
         Livewire::test(SystemUsers::class)->call('toggleModule', $client->id, Modules::F11);
         $this->assertTrue($client->fresh()->canAccess(Modules::F11));
 
+        // Clients don't get F72 by default - the toggle switches it on
         Livewire::test(SystemUsers::class)->call('toggleModule', $client->id, Modules::F72);
-        $this->assertFalse($client->fresh()->canAccess(Modules::F72));
+        $this->assertTrue($client->fresh()->canAccess(Modules::F72));
     }
 
     public function test_the_checkbox_grid_cannot_grant_system_users_or_touch_administrators(): void

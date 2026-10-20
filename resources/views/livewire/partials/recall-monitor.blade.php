@@ -225,6 +225,82 @@
             </div>
         </div>
 
+        {{-- By household: each household that has transmitted a status (f72_interview_status), with its Day 1 and Day 2 recall --}}
+        @php($hhTone = ['complete' => 'bg-green-100 text-green-900', 'partial' => 'bg-amber-100 text-amber-900', 'refused' => 'bg-red-100 text-red-800', 'notyet' => 'bg-[#EEF3EF] text-ink-soft'])
+        @php($outcomeTone = ['completed' => 'bg-green-100 text-green-900', 'refused' => 'bg-red-100 text-red-800', 'other' => 'bg-amber-100 text-amber-900'])
+        @php($outcomeLabel = ['completed' => 'Completed', 'refused' => 'Refused', 'other' => 'Other'])
+        <div class="flex min-w-0 flex-col gap-3 rounded-2xl border border-line bg-white p-[18px]">
+            <div class="flex flex-wrap items-baseline justify-between gap-3">
+                <h2 class="text-[17px] font-bold">By household</h2>
+                <span class="text-[12.5px] text-muted">households that have transmitted a status (f72_interview_status), with the latest Day 1 and Day 2 recall</span>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+                @foreach (\App\Support\RecallMonitor::HOUSEHOLD_STATUSES as $key => $label)
+                    <button type="button" wire:click="filterHouseholds('{{ $key }}')" @if ($hhStatus === $key) aria-pressed="true" @endif
+                        class="flex h-9 items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-bold transition {{ $hhStatus === $key ? 'border-green-700 ring-2 ring-green-700/20' : 'border-transparent' }} {{ $hhTone[$key] }}">
+                        {{ $label }} <span class="font-extrabold">{{ number_format($householdCounts[$key] ?? 0) }}</span>
+                    </button>
+                @endforeach
+                <input type="search" wire:model.live.debounce.400ms="hhSearch" placeholder="Identifier, SWS member no. or name" aria-label="Search households"
+                    class="ml-auto h-9 min-w-0 flex-[0_1_280px] rounded-[10px] border border-field px-3 text-[13px] outline-none focus:border-green-700">
+            </div>
+
+            <div class="relative overflow-x-auto rounded-xl border border-line">
+                <div wire:loading.delay wire:target="hhSearch, filterHouseholds, gotoPage, nextPage, previousPage" class="absolute inset-0 z-10 bg-white/60"></div>
+                <table class="w-full border-collapse text-[13px]">
+                    <thead class="bg-[#F6FAF7] text-xs font-bold text-muted">
+                        <tr>
+                            @foreach (['City', 'District', 'Barangay', 'Identifier 1', 'Identifier 2', 'Identifier 3', 'SWS member no.', 'Last name', 'First name'] as $heading)
+                                <th class="px-3 py-2.5 text-left whitespace-nowrap">{{ $heading }}</th>
+                            @endforeach
+                            @foreach (\App\Support\RecallMonitor::DAYS as $label)<th class="border-l border-line px-3 py-2.5 text-left whitespace-nowrap">{{ $label }}</th>@endforeach
+                            <th class="border-l border-line px-3 py-2.5 text-left whitespace-nowrap">Household</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @forelse ($households as $hh)
+                            <tr wire:key="rm-hh-{{ md5($hh['key']) }}" class="border-t border-[#EEF3EF] align-top">
+                                <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['city'] }}</td>
+                                <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['district'] }}</td>
+                                <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['barangay'] }}</td>
+                                <td class="px-3 py-2.5 font-semibold whitespace-nowrap">{{ $hh['identifier1'] }}</td>
+                                <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['identifier2'] }}</td>
+                                <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['identifier3'] }}</td>
+                                <td class="px-3 py-2.5 font-semibold whitespace-nowrap">{{ $hh['sws_member_no'] }}</td>
+                                @if ($hh['inSws'])
+                                    <td class="px-3 py-2.5 font-bold whitespace-nowrap">{{ $hh['lastname'] }}</td>
+                                    <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['firstname'] }}</td>
+                                @else
+                                    <td colspan="2" class="px-3 py-2.5 text-[12.5px] whitespace-nowrap text-amber-800" title="No SWS record with these identifiers and SWS member no.">Not in SWS data</td>
+                                @endif
+                                @foreach (\App\Support\RecallMonitor::DAYS as $dayKey => $label)
+                                    @php($d = $hh['days'][$dayKey])
+                                    <td class="border-l border-[#EEF3EF] px-3 py-2.5 whitespace-nowrap">
+                                        @if ($d)
+                                            <span class="rounded-full px-2 py-0.5 text-xs font-bold {{ $outcomeTone[$d['outcome']] }}">{{ $outcomeLabel[$d['outcome']] }}</span>
+                                            <span class="ml-1 text-[11.5px] text-muted">status {{ $d['status'] !== '' ? $d['status'] : '—' }}</span>
+                                            <span class="mt-1 block text-[12px] text-ink-soft">{{ $d['date'] ? \Illuminate\Support\Carbon::parse($d['date'])->format('M j, Y') : 'no date' }}</span>
+                                            <span class="block text-[12px] text-muted">{{ $d['researcher'] !== '' ? $d['researcher'] : 'no researcher' }}</span>
+                                        @else
+                                            <span class="text-[12.5px] text-muted">Not yet</span>
+                                        @endif
+                                    </td>
+                                @endforeach
+                                <td class="border-l border-[#EEF3EF] px-3 py-2.5 whitespace-nowrap">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-bold {{ $hhTone[$hh['completion']] }}">{{ \App\Support\RecallMonitor::HOUSEHOLD_STATUSES[$hh['completion']] }}</span>
+                                </td>
+                            </tr>
+                        @empty
+                            <tr><td colspan="12" class="px-4 py-8 text-center text-muted">No transmitted statuses match these filters.</td></tr>
+                        @endforelse
+                    </tbody>
+                </table>
+            </div>
+            {{ $households->links(data: ['scrollTo' => false]) }}
+            <p class="text-[12px] text-muted">Household: <strong>Completed</strong> = Day 1 and Day 2 completed · <strong>1 of 2 days</strong> = one day completed · <strong>Refused</strong> = either day refused (status 3 and above) · <strong>Not yet</strong> = a status was sent but no day is completed or refused yet. A day with no recall shows "Not yet".</p>
+        </div>
+
         {{-- By area --}}
         <div class="flex min-w-0 flex-col gap-3 rounded-2xl border border-line bg-white p-[18px]">
             <div class="flex flex-wrap items-baseline justify-between gap-3">

@@ -31,6 +31,9 @@
 }
 
 /* SWS household map popups (resources/js/sws-map.js) */
+.map-pin { background: none; border: 0; }
+.map-pin svg { display: block; overflow: visible; filter: drop-shadow(0 2px 2px rgb(0 0 0 / 0.55)); }
+.map-pin-count { position: absolute; top: -6px; right: -9px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: #0F3D2E; border: 1.5px solid #FFFFFF; color: #FFFFFF; font: 700 10.5px/15px var(--font-sans); text-align: center; }
 .sws-pop { display: flex; flex-direction: column; gap: 2px; font-family: var(--font-sans); font-size: 12.5px; line-height: 1.45; color: #1B241E; }
 .sws-pop strong { font-size: 13.5px; color: #0F3D2E; }
 .sws-pop-name { font-weight: 700; }

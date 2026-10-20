@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Livewire\Dashboard;
 use App\Livewire\F72Data;
 use App\Models\User;
+use App\Support\Modules;
 use App\Support\Survey;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -23,7 +24,8 @@ class F72DataTest extends TestCase
     {
         parent::setUp();
         $this->setUpSurveyDatabase();
-        $this->client = User::factory()->create();
+        // Clients no longer get F72 by default; an administrator switches it on
+        $this->client = User::factory()->create(['modules' => [Modules::DASHBOARD, Modules::F72, Modules::PROFILE]]);
 
         $this->area = $this->seedArea();
         $covered = $this->seedHousehold($this->area, 'SUN-0005', '6722');

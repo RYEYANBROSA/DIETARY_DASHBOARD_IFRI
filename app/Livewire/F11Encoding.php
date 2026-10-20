@@ -25,11 +25,18 @@ use Livewire\WithPagination;
  * wrong record is corrected by editing it. Every write is recorded: who
  * encoded, edited or uploaded each member is shown beside it, and its full
  * history (with old and new values) can be opened for validation.
+ *
+ * For now the page is view-only (F11 Membership): encoding, editing, upload,
+ * the CSV template and the activity panel are switched off with $editing.
+ * The code is kept - set it to true to bring them back.
  */
-#[Title('F11 Encoding & Upload')]
+#[Title('F11 Membership')]
 class F11Encoding extends Component
 {
     use WithFileUploads, WithPagination;
+
+    /** Encode / edit / upload switched off for now: the page only lists members and their history. */
+    public static bool $editing = false;
 
     /** records | encode | upload */
     #[Url(except: 'records')]
@@ -80,7 +87,7 @@ class F11Encoding extends Component
 
     public function showTab(string $tab): void
     {
-        $this->tab = in_array($tab, ['records', 'encode', 'upload'], true) ? $tab : 'records';
+        $this->tab = self::$editing && in_array($tab, ['encode', 'upload'], true) ? $tab : 'records';
     }
 
     // ----- Records list -----
@@ -128,6 +135,10 @@ class F11Encoding extends Component
 
     public function edit(int $id): void
     {
+        if (!$this->editingAllowed()) {
+            return;
+        }
+
         $row = Survey::db()->table('f11')->where('id', $id)->first();
         if (!$row) {
             $this->dispatch('toast', message: 'That member no longer exists.', type: 'error');
@@ -176,6 +187,10 @@ class F11Encoding extends Component
 
     public function save(): void
     {
+        if (!$this->editingAllowed()) {
+            return;
+        }
+
         $this->resetValidation();
         [$record, $errors] = F11Record::check($this->member, F11Store::knownAreas());
 
@@ -219,6 +234,12 @@ class F11Encoding extends Component
 
     public function checkFile(): void
     {
+        if (!$this->editingAllowed()) {
+            $this->reset('file');
+
+            return;
+        }
+
         $this->upload = null;
         $this->resetValidation('file');
         $maxKb = F11Store::maxUploadKb();
@@ -294,6 +315,10 @@ class F11Encoding extends Component
 
     public function import(): void
     {
+        if (!$this->editingAllowed()) {
+            return;
+        }
+
         $records = $this->upload ? Cache::pull("f11.upload.{$this->upload['token']}") : null;
 
         if (!$records) {
@@ -318,8 +343,27 @@ class F11Encoding extends Component
         $this->resetValidation('file');
     }
 
+    /** False (and says so) while the page is view-only. */
+    private function editingAllowed(): bool
+    {
+        if (!self::$editing) {
+            $this->tab = 'records';
+            $this->dispatch('toast', type: 'info', message: 'F11 Membership is view-only for now.');
+        }
+
+        return self::$editing;
+    }
+
     public function render()
     {
+        // A bookmarked ?tab=encode / ?tab=upload falls back to the list while view-only
+        // ...and the hidden "Added / edited by" and "Upload" filters can't narrow it unseen
+        if (!self::$editing) {
+            $this->tab = 'records';
+            $this->changedBy = '';
+            $this->uploadBatch = '';
+        }
+
         try {
             $areas = collect(Cache::remember('survey.f11.areas', now()->addMinutes(10), fn () => F11Store::areaOptions()->all()));
             $data = ['offline' => false] + $this->areaLists($areas) + $this->recordList() + [
@@ -333,7 +377,8 @@ class F11Encoding extends Component
         }
 
         return view('livewire.f11-encoding', $data + [
-            'activities' => F11Activity::with('user')->latest('id')->limit(8)->get(),
+            'editing' => self::$editing,
+            'activities' => self::$editing ? F11Activity::with('user')->latest('id')->limit(8)->get() : collect(),
             'editors' => User::whereIn('id', F11Change::select('user_id')->distinct())->orderBy('first_name')->get(),
             'uploads' => F11Activity::with('user')->where('action', 'imported')->latest('id')->limit(50)->get(),
             'history' => $this->historyId

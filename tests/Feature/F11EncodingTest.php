@@ -29,6 +29,37 @@ class F11EncodingTest extends TestCase
         $this->area = $this->seedArea();
         $this->seedHousehold($this->area, 'SUN-0005', '6722');
         $this->validator = User::factory()->validator()->create();
+        // Encoding and upload are switched off for now; these tests keep the code working for when they return
+        F11Encoding::$editing = true;
+    }
+
+    protected function tearDown(): void
+    {
+        F11Encoding::$editing = false;
+        parent::tearDown();
+    }
+
+    public function test_for_now_the_page_is_view_only(): void
+    {
+        F11Encoding::$editing = false;
+        Survey::db()->table('f11')->insert([...$this->member(), 'surname' => 'BONCAROS', 'givenname' => 'JOYLYN', 'member_no' => '01']);
+        $id = Survey::db()->table('f11')->value('id');
+        $this->actingAs($this->validator);
+
+        Livewire::test(F11Encoding::class)
+            ->assertSee('F11 Membership')
+            ->assertSee('BONCAROS, JOYLYN')
+            ->assertSee('History')
+            ->assertDontSee('CSV template')
+            ->assertDontSee('Upload CSV')
+            ->assertDontSee('Recent F11 activity')
+            ->assertDontSee('Added / edited by')
+            ->call('showTab', 'encode')->assertSet('tab', 'records')
+            ->call('edit', $id)->assertSet('editingId', null)
+            ->set('member', $this->member(['givenname' => 'Changed']))->call('save')
+            ->call('showHistory', $id)->assertSet('historyId', $id);
+
+        $this->assertSame('JOYLYN', Survey::db()->table('f11')->where('id', $id)->value('givenname'));
     }
 
     private function member(array $overrides = []): array

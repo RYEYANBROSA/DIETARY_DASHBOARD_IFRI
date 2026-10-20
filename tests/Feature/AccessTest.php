@@ -31,7 +31,7 @@ class AccessTest extends TestCase
         $this->assertFalse($validator->canAccess(Modules::F72));
         $this->assertFalse($validator->canAccess(Modules::USERS));
 
-        $this->assertTrue($client->canAccess(Modules::F72));
+        $this->assertFalse($client->canAccess(Modules::F72));
         $this->assertFalse($client->canAccess(Modules::F11));
         $this->assertFalse($client->canAccess(Modules::USERS));
     }

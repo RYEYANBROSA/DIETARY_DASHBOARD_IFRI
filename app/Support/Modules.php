@@ -22,7 +22,7 @@ final class Modules
     /** key => [label, short label, route name, icon], in sidebar order */
     public const ALL = [
         self::DASHBOARD => ['label' => 'Dashboard', 'short' => 'Dashboard', 'route' => 'dashboard', 'icon' => 'grid'],
-        self::F11 => ['label' => 'F11 Encoding & Upload', 'short' => 'F11', 'route' => 'f11', 'icon' => 'upload'],
+        self::F11 => ['label' => 'F11 Membership', 'short' => 'F11', 'route' => 'f11', 'icon' => 'users'],
         self::F72 => ['label' => 'F72 Food Recall', 'short' => 'F72', 'route' => 'f72', 'icon' => 'table'],
         self::SWS => ['label' => 'SWS Upload Data', 'short' => 'SWS', 'route' => 'sws', 'icon' => 'database'],
         self::PROFILE => ['label' => 'My Profile', 'short' => 'Profile', 'route' => 'profile', 'icon' => 'user'],
@@ -47,7 +47,7 @@ final class Modules
         return match ($level) {
             UserLevel::Administrator => self::keys(),
             UserLevel::Validator => [self::DASHBOARD, self::F11, self::SWS, self::PROFILE],
-            UserLevel::Client => [self::DASHBOARD, self::F72, self::PROFILE],
+            UserLevel::Client => [self::DASHBOARD, self::PROFILE],
         };
     }
 
