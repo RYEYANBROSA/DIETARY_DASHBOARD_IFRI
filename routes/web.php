@@ -13,6 +13,7 @@ use App\Livewire\F11Encoding;
 use App\Livewire\F72Data;
 use App\Livewire\Profile;
 use App\Livewire\SwsData;
+use App\Livewire\SyncData;
 use App\Livewire\SystemUsers;
 use App\Support\F11Store;
 use App\Support\SwsStore;
@@ -68,6 +69,8 @@ Route::middleware('auth')->group(function () {
         });
         Route::get('/profile', Profile::class)->middleware('module:profile')->name('profile');
         Route::get('/users', SystemUsers::class)->middleware('module:users')->name('users');
+        // Administrators only (Modules::ADMIN_ONLY): live server -> local copy of the survey tables
+        Route::get('/sync', SyncData::class)->middleware('module:sync')->name('sync');
 
         // Where an account with every module unticked lands
         Route::view('/no-access', 'no-access')->name('no-access');

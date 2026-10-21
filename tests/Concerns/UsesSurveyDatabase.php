@@ -6,7 +6,7 @@ use App\Support\Survey;
 
 /**
  * Gives a test a fresh survey database (in-memory SQLite, see phpunit.xml)
- * with the final-schema tables, plus helpers to fill it.
+ * with the survey tables in the live layout, plus helpers to fill it.
  */
 trait UsesSurveyDatabase
 {
@@ -18,7 +18,7 @@ trait UsesSurveyDatabase
 
     protected function seedArea(string $province = 'Surigao del Norte', string $municipality = 'Dapa', string $barangay = 'Barangay 1'): array
     {
-        Survey::db()->table('LocalArea')->insert(compact('province', 'municipality', 'barangay') + ['status' => 'transmitted']);
+        Survey::db()->table('localarea')->insert(compact('province', 'municipality', 'barangay') + ['status' => 'transmitted']);
 
         return compact('province', 'municipality', 'barangay');
     }
@@ -41,7 +41,7 @@ trait UsesSurveyDatabase
             'mealcode' => '1',
             'fooditem' => 'RICE, COOKED',
             'foodweight' => '150',
-            'weight_method' => '1',
+            'measurement_method' => '1',
             'researcher' => 'enum01',
             ...$extra,
         ]);

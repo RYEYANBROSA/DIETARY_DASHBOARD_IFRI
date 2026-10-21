@@ -13,7 +13,7 @@ Built with Laravel 12, Livewire 3 and Tailwind CSS 4, using design Option A (for
 
 | Email | Level | Modules |
 |---|---|---|
-| `admin@dietary.test` | Administrator | Dashboard, F11, F72, My Profile, System Users |
+| `admin@dietary.test` | Administrator | Dashboard, F11, F72, SWS Upload Data, Sync Data, My Profile, System Users |
 | `validator@dietary.test` | Validator | Dashboard, F11, SWS Upload Data, My Profile |
 | `client@dietary.test` | Client | Dashboard, My Profile |
 
@@ -29,10 +29,11 @@ to the values above, password included. See `database/seeders/DatabaseSeeder.php
 | SWS Upload Data | ✓ | ✓ | | Add / edit / upload SWS transmission records, view all of them (`sws_data`) |
 | F72 Food Recall | ✓ | | | Read-only coverage, households, recalls, food lines, downloads (`f72`) |
 | My Profile | ✓ | ✓ | ✓ | Own name, mobile number, password |
+| Sync Data | ✓ | | | Add new survey rows from the live server (add only); local vs live row counts |
 | System Users | ✓ | | | Add accounts, set levels, switch modules on/off |
 
-In **System Users**, administrators can switch any module on or off for each account. System Users itself is the
-exception: only administrators can have it. Administrators always have every module.
+In **System Users**, administrators can switch any module on or off for each account. System Users and Sync Data
+are the exception: only administrators can have them. Administrators always have every module.
 
 ### Dashboard - Overview
 
@@ -68,7 +69,7 @@ tablets fill.
   survey is `household_listing`, where covered = status 1–2 and refused = status 4.
 - **Recalls per day transmitted.**
 - **By researcher:** click a row to filter by that researcher.
-- **By household:** every household that has transmitted a status to `f72_interview_status` (one row per identifiers 1-3 + SWS member no.; area from the recall, name from the matching SWS record, or "Not in SWS data") with its latest Day 1 and Day 2 recall - outcome, interview status code, date transmitted and researcher - and the household completion: **Completed** (both days completed), **1 of 2 days**, **Refused** (either day status 3+), **Not yet**. Click a completion chip to list only those, search by identifier, SWS member no. or name; 25 per page. All the filters apply.
+- **By household:** every household that has transmitted a status to `f72_interview_status` (one row per identifiers 1-3 + SWS member no.; area from the recall, name from the matching SWS record, or "Not in SWS data") with its latest Day 1 and Day 2 recall - outcome, interview status code, date transmitted and researcher - and the household completion: **Completed** (both days completed), **1 of 2 days**, **Refused** (either day status 3+), **Not yet**. Click a completion chip to list only those, search by identifier, SWS member no. or name; 25 per page. All the filters apply. **Generate file** (accounts with SWS Upload Data) downloads the list as shown - every filter, search and completion chip applied - as an .xlsx in the SWS template layout (CITY … IDP_AGE): details from each household's SWS record, or just the area, identifiers and SWS member no. from the recall when there is none. Blank LASTNAME, FIRSTNAME, SUFFIX, MIDDLENAME say **FOR UPDATE**; blank address, contact and INDEXWOMENNAME say **NO DATA**; blank EMAIL_ADDRESS is `no.data@example.com` and blank LATITUDE / LONGITUDE / IDP_AGE are `0`, so the file uploads back into SWS as it is (a 0, 0 location is saved as no coordinates).
 - **By area:** province › district › barangay. Click a row to drill down.
 - **Filters:** date transmitted (from / to), province, municipality / district, barangay, researcher, and recall
   day.
@@ -188,6 +189,32 @@ BUILDING_NO, BLOCK, STREET_NAME, SUBD, CONTACT_NUMBER, EMAIL_ADDRESS, LATITUDE, 
   - **Per barangay & household (ZIP)**: a folder per barangay with a sub-folder per household. Pick a province
     first.
 
+### Sync Data (administrators)
+
+Keeps this system's survey tables a copy of the live server's (`mysql_live`, where the tablets transmit). The live
+server is **only read**.
+
+- **Tables:** `localarea`, `household_listing`, `f11`, `f72` and `f72_interview_status`, each with its row count here
+  and on the live server, whether the counts match, and its last fetch (when, by whom or "Auto-fetch", rows added
+  and rows kept that the live server deleted, how long it took). `sws_data` is listed with both counts but isn't fetched: it goes the other way,
+  through **Transmit** in SWS Upload Data.
+- **Fetch** (per table) **only adds**: the live rows that aren't here yet are inserted, matched by the table's
+  unique key (area + identifiers 1-3, plus member no. / recall day / lane as on the live server). Every fetch checks
+  the whole table. **Fetch all tables** does every table.
+  - A row already here is **never updated**, even if it changed on the live server.
+  - A row deleted on the live server is **never removed** here. The page counts those as "kept (deleted on live)",
+    and "more here" in the counts means rows the live server no longer has.
+- If a local table still has an older layout, it is rebuilt in the live layout first, keeping its rows.
+- **Auto-fetch every 10 minutes:** `php artisan survey:sync --auto` is scheduled in `routes/console.php`. The
+  server must run Laravel's scheduler:
+  - Linux: a cron entry `* * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1`
+  - Windows: a Task Scheduler task that runs `php artisan schedule:run` in the app folder every minute
+  - or keep `php artisan schedule:work` running.
+
+  The page says when the auto-fetch last ran, and warns when it is overdue.
+- From the command line: `php artisan survey:sync` (every table) or `php artisan survey:sync f72` (one table).
+- Every fetch is logged in `survey_syncs`; the page lists the last 15.
+
 ## Alerts
 
 All messages use SweetAlert2 (`resources/js/alerts.js`):
@@ -214,16 +241,18 @@ You can also pass `title:`, `persist: true` or `small: true`. In Blade, call `no
 ## Databases
 
 - `DB_*` holds this app's own tables: accounts, sessions, cache, and the F11 activity trail (`f11_activities`).
-- `SURVEY_DB_*` holds the survey tables, in the final DDCS schema: `f11`, `f72`, `household_listing`, `LocalArea`,
-  plus `sws_data` for SWS Upload Data.
+- `SURVEY_DB_*` holds the survey tables in the **live server's layout** (`App\Support\Survey::definitions()`):
+  `localarea`, `household_listing`, `f11`, `f72`, `f72_interview_status`, plus `sws_data` for SWS Upload Data.
+  Sync Data fills the first five from the live server. The migration `align_survey_tables_with_live` rebuilt older
+  copies in this layout, keeping their rows.
   In development both point at `dietary_dashboard`. Production can point `SURVEY_DB_*` at another database.
 - `php artisan survey:install-schema` creates any survey table that is missing. Existing tables are left as they
   are.
 - `php artisan survey:copy-from ddcs_dashboard` copies another database's survey rows in. In development this is
   used for dummy data. Only columns that both databases have are copied. Add `--fresh` to replace rows that are
   already there.
-- `DB_*_LIVE` is the live server (`mysql_live`) the field researchers' tablets read. Only SWS Upload Data's
-  **Transmit** writes to it. The test suite refuses to run unless it points at in-memory SQLite.
+- `DB_*_LIVE` is the live server (`mysql_live`) the field researchers' tablets read and transmit to. Only SWS
+  Upload Data's **Transmit** writes to it; Sync Data and the 24-hr recall monitoring only read it. The test suite refuses to run unless it points at in-memory SQLite.
 - **`php artisan migrate:fresh` drops every table in the database, including the survey tables** while they share
   `dietary_dashboard`. Run the two commands above again afterwards.
 
@@ -235,8 +264,9 @@ npm install && npm run build
 php artisan migrate
 php artisan db:seed                           # demo accounts (local only)
 php artisan survey:install-schema
-php artisan survey:copy-from ddcs_dashboard   # optional dummy data
+php artisan survey:sync                       # add the live server's survey rows (add only)
 php artisan serve --port=8001
+php artisan schedule:work                     # in another terminal: the 10-minute auto-fetch
 ```
 
 `APP_URL` must match the address people open, because links in emails are built from it.

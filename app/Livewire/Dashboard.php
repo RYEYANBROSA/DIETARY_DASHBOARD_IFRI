@@ -3,7 +3,11 @@
 namespace App\Livewire;
 
 use App\Support\Overview;
+use App\Support\Modules;
 use App\Support\RecallMonitor;
+use App\Support\SwsRecord;
+use App\Support\SwsStore;
+use App\Support\XlsxWriter;
 use Illuminate\Support\Facades\Log;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
@@ -20,6 +24,20 @@ use Livewire\WithPagination;
 class Dashboard extends Component
 {
     use WithPagination;
+
+    /**
+     * In the generated file, what a blank column becomes. Each value passes the
+     * SWS upload check, so the file can go straight back into SWS Upload Data:
+     * email, coordinates and age need an email / numbers, and a 0, 0
+     * location is saved as "no coordinates" (SwsRecord::check).
+     */
+    public const FILE_BLANKS = [
+        'lastname' => 'FOR UPDATE', 'firstname' => 'FOR UPDATE', 'suffix' => 'FOR UPDATE', 'middlename' => 'FOR UPDATE',
+        'floor_no' => 'NO DATA', 'building_no' => 'NO DATA', 'block' => 'NO DATA', 'street_name' => 'NO DATA',
+        'subd' => 'NO DATA', 'contact_number' => 'NO DATA', 'indexwomenname' => 'NO DATA',
+        'email_address' => 'no.data@example.com',
+        'latitude' => '0', 'longitude' => '0', 'idp_age' => '0',
+    ];
 
     /** Households per page in the recall tab's "By household" table. */
     public const HOUSEHOLDS_PER_PAGE = 25;
@@ -122,6 +140,57 @@ class Dashboard extends Component
             message: $state === 'ok' ? 'Live recall data refreshed.' : "The live server still can't be reached.");
     }
 
+    /**
+     * The "By household" list (every filter applied) as an .xlsx in the SWS
+     * template layout (SwsRecord::COLUMNS, upper-case headers). Each household's
+     * details come from its SWS record; one with no SWS record has only the
+     * area, identifiers and SWS member no. from its recall. Blank columns get
+     * the FILE_BLANKS placeholders.
+     * It holds contact details, so only accounts with the SWS module get it.
+     */
+    public function downloadHouseholds()
+    {
+        if (!auth()->user()->canAccess(Modules::SWS)) {
+            $this->dispatch('toast', type: 'error', message: 'Downloading households needs access to SWS Upload Data.');
+
+            return null;
+        }
+
+        try {
+            $households = RecallMonitor::households($this->recallFilters(), $this->hhSearch, $this->hhStatus);
+        } catch (\Throwable $e) {
+            Log::warning('Household download: ' . $e->getMessage());
+            $this->dispatch('toast', type: 'error', message: "The live server can't be reached right now. Try again shortly.");
+
+            return null;
+        }
+
+        if ($households->isEmpty()) {
+            $this->dispatch('toast', type: 'warning', message: 'No households match these filters - nothing to download.');
+
+            return null;
+        }
+
+        $sws = SwsStore::table()->get(SwsRecord::COLUMNS)->keyBy(fn ($r) => SwsRecord::keyOf($r));
+        $rows = $households->map(function ($hh) use ($sws) {
+            $record = $sws[$hh['key']] ?? null;
+
+            // No SWS record: what the recall knows, its mobile no. as the contact number
+            $fallback = $hh + ['contact_number' => $hh['mobile_no'] ?? ''];
+
+            return array_map(function ($column) use ($record, $fallback) {
+                $value = trim((string) ($record ? $record->{$column} : ($fallback[$column] ?? '')));
+                return $value === '' ? (self::FILE_BLANKS[$column] ?? '') : $value;
+            }, SwsRecord::COLUMNS);
+        });
+
+        $path = tempnam(sys_get_temp_dir(), 'hh') . '.xlsx';
+        $numeric = array_keys(array_intersect(SwsRecord::COLUMNS, ['latitude', 'longitude', 'idp_age']));
+        XlsxWriter::write($path, array_map('strtoupper', SwsRecord::COLUMNS), $rows, $numeric);
+
+        return response()->download($path, 'sws_households_' . now()->format('Y-m-d_H-i-s') . '.xlsx')->deleteFileAfterSend();
+    }
+
     public function clearRecallFilters(): void
     {
         $this->reset('from', 'to', 'province', 'municipality', 'barangay', 'researcher', 'day', 'hhSearch', 'hhStatus');
@@ -195,6 +264,7 @@ class Dashboard extends Component
             'recall' => $recall,
             'options' => $options,
             'households' => $households,
+            'canDownloadHouseholds' => auth()->user()->canAccess(Modules::SWS),
             'householdCounts' => $householdCounts,
             'recallMissing' => $state === 'missing',
             'recallState' => $state,

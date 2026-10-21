@@ -164,7 +164,8 @@ class F72Data extends Component
                 DB::raw('MAX(f11.member_category) as member_category'),
                 DB::raw('MAX(f72.researcher) as researcher'),
                 DB::raw('MAX(f72.interview_status) as interview_status'),
-                DB::raw('MIN(f72.created_at) as recorded_at'),
+                // When the recall arrived: date_transmitted on the live layout, created_at in older copies
+                DB::raw('MIN(f72.' . (in_array('date_transmitted', Survey::columns('f72'), true) ? 'date_transmitted' : 'created_at') . ') as recorded_at'),
                 DB::raw('COUNT(*) as line_count'),
             )
             ->when($this->search !== '', fn ($q) => $q->where(fn ($w) => $w
@@ -186,7 +187,9 @@ class F72Data extends Component
                 ->orWhere('researcher', 'like', $this->term())
                 ->orWhere('identifier1', 'like', $this->term())
                 ->orWhere('member_no', 'like', $this->term())))
-            ->select('id', 'province', 'municipality', 'barangay', 'identifier1', 'identifier2', 'identifier3', 'member_no', 'foodrecall_day', 'mealcode', 'fooditem', 'foodweight', 'weight_method', 'researcher')
+            ->select('id', 'province', 'municipality', 'barangay', 'identifier1', 'identifier2', 'identifier3', 'member_no', 'foodrecall_day', 'mealcode', 'fooditem', 'foodweight', 'researcher')
+            // How it was weighed: measurement_method on the live layout, weight_method in older copies
+            ->when(Survey::weightColumn(), fn ($q, $column) => $q->addSelect("{$column} as weight_method"))
             ->orderByDesc('id')
             ->paginate(15);
     }

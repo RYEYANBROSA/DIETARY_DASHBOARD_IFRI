@@ -23,15 +23,7 @@ class RecallMonitorTest extends TestCase
         parent::setUp();
         $this->setUpSurveyDatabase();
 
-        // As on the live server: f72_interview_status
-        Survey::db()->getSchemaBuilder()->create(RecallMonitor::TABLE, function ($t) {
-            $t->increments('id');
-            foreach (['province', 'municipality', 'barangay', 'identifier1', 'identifier2', 'identifier3', 'sws_member_no', 'member_no', 'foodrecall_day', 'interview_status', 'interview_status_others', 'researcher'] as $c) {
-                $t->string($c, 100)->nullable();
-            }
-            $t->dateTime('date_transmitted')->nullable();
-            $t->dateTime('date_updated')->nullable();
-        });
+        // f72_interview_status comes with the survey tables, in the live layout (Survey::definitions())
 
         // Targets: 10 SWS respondents, 6 in Barangay 1 (District 1) and 4 in Paltok (District 1)
         foreach (range(1, 10) as $i) {
@@ -61,9 +53,10 @@ class RecallMonitorTest extends TestCase
         $this->recall(4, '1', '1', 'DR_002', '2026-10-15');
         $this->recall(5, '1', '3', 'DR_001', '2026-10-15');
         $this->recall(6, '1', '4', 'DR_002', '2026-10-15');
-        // Member 7 (Paltok): first sent as refused, re-sent later as completed - counts once, as completed
+        // Member 7 (Paltok): first sent as refused, re-sent later as completed - the server updates the row (its
+        // unique key is the member and day), so it counts once, as completed
         $this->recall(7, '1', '3', 'DR_002', '2026-10-15', 'PALTOK', '2026-10-15 09:00:00');
-        $this->recall(7, '1', '1', 'DR_002', '2026-10-16', 'PALTOK', '2026-10-16 10:00:00');
+        Survey::db()->table(RecallMonitor::TABLE)->where('sws_member_no', 'SWS_7')->update(['interview_status' => '1', 'date_transmitted' => '2026-10-16 09:00:00', 'date_updated' => '2026-10-16 10:00:00']);
         // Day 2: members 1 and 2 completed, 3 refused
         $this->recall(1, '2', '1', 'DR_001', '2026-10-16');
         $this->recall(2, '2', '2', 'DR_001', '2026-10-16');
@@ -188,6 +181,61 @@ class RecallMonitorTest extends TestCase
             ->assertSet('hhStatus', 'complete')
             ->assertSee('SWS_2')
             ->assertDontSee('SWS_4');
+    }
+
+    public function test_the_household_list_downloads_in_the_sws_template_format(): void
+    {
+        $this->seedRecalls();
+        SwsStore::table()->where('sws_member_no', 'SWS_1')->update(['lastname' => 'BROSA', 'firstname' => 'RYAN', 'contact_number' => '09066963148', 'latitude' => '14.6427441']);
+        // A recall for a household with no SWS record: only what the recall knows
+        $this->recall(99, '1', '1', 'DR_003', '2026-10-16');
+
+        // Clients (no SWS module) don't get the button or the file
+        $this->actingAs(User::factory()->create());
+        Livewire::test(Dashboard::class)->call('showTab', 'recall')
+            ->assertDontSee('Generate file')
+            ->call('downloadHouseholds')->assertNoFileDownloaded();
+
+        $this->actingAs(User::factory()->validator()->create());
+        $component = Livewire::test(Dashboard::class)->call('showTab', 'recall')
+            ->assertSee('Generate file')
+            ->set('researcher', 'DR_001')->set('hhStatus', '')
+            ->call('downloadHouseholds');
+        $download = $component->effects['download'];
+        $this->assertStringStartsWith('sws_households_', $download['name']);
+
+        $path = tempnam(sys_get_temp_dir(), 'test') . '.xlsx';
+        file_put_contents($path, base64_decode($download['content']));
+        [$rows, $error] = SwsStore::readFile($path, 'xlsx');
+        @unlink($path);
+        $this->assertNull($error);
+        $rows = array_column($rows, 'data');
+
+        // DR_001's households (1, 2, 5), in the template columns
+        $this->assertSame(['SWS_1', 'SWS_2', 'SWS_5'], array_column($rows, 'sws_member_no'));
+        $this->assertSame(['BROSA', 'RYAN', '09066963148', '14.6427441'], [$rows[0]['lastname'], $rows[0]['firstname'], $rows[0]['contact_number'], $rows[0]['latitude']]);
+        // Blanks: FOR UPDATE in the name columns, NO DATA in the text details, valid placeholders where the upload
+        // needs an email or numbers; area and identifiers as they are
+        $this->assertSame(['FOR UPDATE', 'FOR UPDATE', 'NO DATA', 'no.data@example.com', '0', '0', '0', ''],
+            [$rows[1]['lastname'], $rows[0]['suffix'], $rows[1]['contact_number'], $rows[1]['email_address'], $rows[1]['latitude'], $rows[1]['longitude'], $rows[0]['idp_age'], $rows[1]['identifier2']]);
+
+        // ...so the file passes the SWS upload check as it is, and 0, 0 is saved as no location
+        foreach ($rows as $row) {
+            [$record, $errors] = \App\Support\SwsRecord::check($row);
+            $this->assertSame([], $errors, $row['sws_member_no']);
+        }
+        [$record] = \App\Support\SwsRecord::check($rows[1]);
+        $this->assertSame(['', '', 0], [$record['latitude'], $record['longitude'], $record['idp_age']]);
+        $this->assertSame('14.6427441', \App\Support\SwsRecord::check($rows[0])[0]['latitude']);
+
+        // The household with no SWS record is still there, area and identifiers only
+        $all = Livewire::test(Dashboard::class)->call('showTab', 'recall')->call('downloadHouseholds')->effects['download'];
+        $path = tempnam(sys_get_temp_dir(), 'test') . '.xlsx';
+        file_put_contents($path, base64_decode($all['content']));
+        [$rows] = SwsStore::readFile($path, 'xlsx');
+        @unlink($path);
+        $stray = collect(array_column($rows, 'data'))->firstWhere('sws_member_no', 'SWS_99');
+        $this->assertSame(['QUEZON CITY', 'BARANGAY 1', 'QC99', 'FOR UPDATE', 'NO DATA', '0'], [$stray['city'], $stray['barangay'], $stray['identifier1'], $stray['lastname'], $stray['street_name'], $stray['idp_age']]);
     }
 
     public function test_rows_are_cached_until_refreshed(): void

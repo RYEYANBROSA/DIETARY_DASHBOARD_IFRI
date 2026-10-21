@@ -139,11 +139,12 @@ final class SurveyStats
     /** Share of food lines per weighing method. */
     public static function weightMethods(Builder $query): array
     {
-        $counts = (clone $query)
-            ->select('weight_method', DB::raw('COUNT(*) as total'))
-            ->whereNotNull('weight_method')
-            ->groupBy('weight_method')
-            ->pluck('total', 'weight_method');
+        $column = Survey::weightColumn();
+        $counts = $column === null ? collect() : (clone $query)
+            ->select($column, DB::raw('COUNT(*) as total'))
+            ->whereNotNull($column)
+            ->groupBy($column)
+            ->pluck('total', $column);
 
         $known = collect(Survey::WEIGHT_METHODS)->map(fn ($label, $code) => (int) ($counts[$code] ?? 0));
         $total = max(1, $known->sum());

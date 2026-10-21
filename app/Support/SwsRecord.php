@@ -121,6 +121,11 @@ final class SwsRecord
 
         $record = $data;
         $record['idp_age'] = $data['idp_age'] === '' ? null : (int) $data['idp_age'];
+        // 0, 0 is the "no location" placeholder (the Dashboard's generated file uses it) - not a place in the sea
+        if ($data['latitude'] !== '' && $data['longitude'] !== '' && (float) $data['latitude'] == 0 && (float) $data['longitude'] == 0) {
+            $record['latitude'] = '';
+            $record['longitude'] = '';
+        }
 
         return [$record, []];
     }

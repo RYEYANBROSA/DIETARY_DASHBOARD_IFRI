@@ -244,6 +244,16 @@
                 @endforeach
                 <input type="search" wire:model.live.debounce.400ms="hhSearch" placeholder="Identifier, SWS member no. or name" aria-label="Search households"
                     class="ml-auto h-9 min-w-0 flex-[0_1_280px] rounded-[10px] border border-field px-3 text-[13px] outline-none focus:border-green-700">
+                @if ($canDownloadHouseholds)
+                    {{-- The list as shown (all filters), in the SWS template layout --}}
+                    <button type="button" wire:click="downloadHouseholds" wire:loading.attr="disabled" wire:target="downloadHouseholds"
+                        title="Download these {{ number_format($households->total()) }} household(s) in the SWS template format (.xlsx)"
+                        class="flex h-9 items-center gap-1.5 rounded-[10px] bg-green-700 px-3.5 text-[13px] font-bold text-white hover:bg-green-800 disabled:opacity-60">
+                        <x-icon name="download" size="16" />
+                        <span wire:loading.remove wire:target="downloadHouseholds">Generate file</span>
+                        <span wire:loading wire:target="downloadHouseholds">Generating…</span>
+                    </button>
+                @endif
             </div>
 
             <div class="relative overflow-x-auto rounded-xl border border-line">
@@ -268,9 +278,9 @@
                                 <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['identifier2'] }}</td>
                                 <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['identifier3'] }}</td>
                                 <td class="px-3 py-2.5 font-semibold whitespace-nowrap">{{ $hh['sws_member_no'] }}</td>
-                                @if ($hh['inSws'])
+                                @if ($hh['inSws'] || $hh['lastname'] !== '' || $hh['firstname'] !== '')
                                     <td class="px-3 py-2.5 font-bold whitespace-nowrap">{{ $hh['lastname'] }}</td>
-                                    <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['firstname'] }}</td>
+                                    <td class="px-3 py-2.5 whitespace-nowrap">{{ $hh['firstname'] }}@if (!$hh['inSws'])<span class="block text-[11.5px] font-normal text-amber-800" title="No SWS record with these identifiers and SWS member no. - name from the recall">not in SWS data</span>@endif</td>
                                 @else
                                     <td colspan="2" class="px-3 py-2.5 text-[12.5px] whitespace-nowrap text-amber-800" title="No SWS record with these identifiers and SWS member no.">Not in SWS data</td>
                                 @endif

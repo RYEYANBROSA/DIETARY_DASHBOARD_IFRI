@@ -218,8 +218,8 @@ final class RecallMonitor
      * f72_interview_status (identifiers 1-3 + SWS member no.), with its latest
      * Day 1 and Day 2 recall: status, outcome, date transmitted and researcher,
      * and the household's completion (HOUSEHOLD_STATUSES). The area is the
-     * recall's own; the name comes from the matching SWS record, as the recall
-     * table has none. Every filter applies; $search matches the identifiers,
+     * recall's own; the name comes from the matching SWS record, or else from
+     * the recall (givenname / surname, where the table has them). Every filter applies; $search matches the identifiers,
      * SWS member no. and name, and $status narrows to one completion.
      */
     public static function households(array $f, string $search = '', string $status = ''): Collection
@@ -229,6 +229,10 @@ final class RecallMonitor
             $households[$r['sws']]['ids'] = $r['ids'];
             $households[$r['sws']]['area'] = $r['area'];
             $households[$r['sws']]['days'][$r['day']] = $r;
+            // The latest recall that names the member
+            if ($r['person'][0] !== '' || $r['person'][1] !== '') {
+                $households[$r['sws']]['person'] = $r['person'];
+            }
         }
         if ($households === []) {
             return collect();
@@ -245,7 +249,9 @@ final class RecallMonitor
                     'key' => $key,
                     'city' => $hh['area'][0], 'district' => $hh['area'][1], 'barangay' => $hh['area'][2],
                     'identifier1' => $hh['ids'][0], 'identifier2' => $hh['ids'][1], 'identifier3' => $hh['ids'][2], 'sws_member_no' => $hh['ids'][3],
-                    'lastname' => (string) ($sws->lastname ?? ''), 'firstname' => (string) ($sws->firstname ?? ''),
+                    // The SWS record's name, else the one the tablet sent with the recall
+                    'lastname' => (string) ($sws->lastname ?? $hh['person'][0] ?? ''), 'firstname' => (string) ($sws->firstname ?? $hh['person'][1] ?? ''),
+                    'mobile_no' => (string) ($hh['person'][2] ?? ''),
                     'inSws' => $sws !== null,
                 ];
                 foreach (self::DAYS as $day => $label) {
@@ -307,9 +313,11 @@ final class RecallMonitor
         }
 
         try {
-            $rows = self::db()->table(self::TABLE)->orderBy('id')
-                ->get(['province', 'municipality', 'barangay', 'identifier1', 'identifier2', 'identifier3', 'sws_member_no', 'member_no', 'foodrecall_day', 'interview_status', 'researcher', 'date_transmitted', 'date_updated'])
-                ->map(fn ($r) => (array) $r)->all();
+            // Name and mobile no. came later to the live table - read them where they exist
+            $wanted = ['province', 'municipality', 'barangay', 'identifier1', 'identifier2', 'identifier3', 'sws_member_no', 'member_no', 'givenname', 'surname', 'mobile_no', 'foodrecall_day', 'interview_status', 'researcher', 'date_transmitted', 'date_updated'];
+            $columns = array_values(array_intersect($wanted, self::db()->getSchemaBuilder()->getColumnListing(self::TABLE)));
+            $rows = self::db()->table(self::TABLE)->orderBy('id')->get($columns)
+                ->map(fn ($r) => (array) $r + ['givenname' => '', 'surname' => '', 'mobile_no' => ''])->all();
         } catch (\Throwable $e) {
             self::markDown($e->getMessage());
             throw $e;
@@ -338,6 +346,7 @@ final class RecallMonitor
                 // Same shape as SwsRecord::keyOf(), to find the SWS respondent the recall belongs to
                 'sws' => implode('|', [(string) $r->identifier1, (string) $r->identifier2, (string) $r->identifier3, (string) $r->sws_member_no]),
                 'ids' => [(string) $r->identifier1, (string) $r->identifier2, (string) $r->identifier3, (string) $r->sws_member_no],
+                'person' => [trim((string) $r->surname), trim((string) $r->givenname), trim((string) $r->mobile_no)],
                 'day' => trim((string) $r->foodrecall_day),
                 'status' => trim((string) $r->interview_status),
                 'outcome' => self::outcome($r->interview_status),
@@ -364,30 +373,10 @@ final class RecallMonitor
         Log::warning('24-hr recall monitoring: ' . self::connectionName() . ' unreachable - ' . $reason);
     }
 
-    /**
-     * A short socket check on the server's port before querying it: a server
-     * out of reach otherwise holds the page for the full connection timeout.
-     * Local and SQLite connections always pass.
-     */
+    /** A short socket check before querying a remote server - see LiveServer. */
     private static function reachable(): bool
     {
-        $config = config('database.connections.' . self::connectionName(), []);
-        if (!in_array($config['driver'] ?? '', ['mysql', 'mariadb'], true) || !empty($config['unix_socket'])) {
-            return true;
-        }
-
-        $host = (string) ($config['host'] ?? '127.0.0.1');
-        if (in_array($host, ['127.0.0.1', 'localhost', '::1'], true)) {
-            return true;
-        }
-
-        $socket = @fsockopen($host, (int) ($config['port'] ?? 3306), $errno, $error, self::PROBE_SECONDS);
-        if ($socket === false) {
-            return false;
-        }
-        fclose($socket);
-
-        return true;
+        return LiveServer::reachable(self::connectionName(), self::PROBE_SECONDS);
     }
 
     /** SWS respondents in the filtered area - the base of every rate. */

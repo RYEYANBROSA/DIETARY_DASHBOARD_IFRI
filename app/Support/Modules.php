@@ -16,6 +16,7 @@ final class Modules
     public const F11 = 'f11';
     public const F72 = 'f72';
     public const SWS = 'sws';
+    public const SYNC = 'sync';
     public const PROFILE = 'profile';
     public const USERS = 'users';
 
@@ -25,12 +26,13 @@ final class Modules
         self::F11 => ['label' => 'F11 Membership', 'short' => 'F11', 'route' => 'f11', 'icon' => 'users'],
         self::F72 => ['label' => 'F72 Food Recall', 'short' => 'F72', 'route' => 'f72', 'icon' => 'table'],
         self::SWS => ['label' => 'SWS Upload Data', 'short' => 'SWS', 'route' => 'sws', 'icon' => 'database'],
+        self::SYNC => ['label' => 'Sync Data', 'short' => 'Sync', 'route' => 'sync', 'icon' => 'sync'],
         self::PROFILE => ['label' => 'My Profile', 'short' => 'Profile', 'route' => 'profile', 'icon' => 'user'],
         self::USERS => ['label' => 'System Users', 'short' => 'Users', 'route' => 'users', 'icon' => 'users'],
     ];
 
     /** Modules no non-administrator can be granted. */
-    public const ADMIN_ONLY = [self::USERS];
+    public const ADMIN_ONLY = [self::USERS, self::SYNC];
 
     public static function keys(): array
     {

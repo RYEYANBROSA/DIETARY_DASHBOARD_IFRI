@@ -9,11 +9,12 @@ use Illuminate\Support\Facades\DB;
 /**
  * The survey database (the "survey" connection) and its tables.
  *
- * The tables follow the final DDCS schema - f11, f72, household_listing and
- * LocalArea - but older copies of the database carry a slightly different
- * column set (and lower-case "localarea", or extra tables such as
- * f72_addtional_question and transmission_log). Callers ask here which tables
- * and columns exist instead of assuming them.
+ * The survey tables - localarea, household_listing, f11, f72 and
+ * f72_interview_status - follow the live server the tablets transmit to
+ * (mysql_live, see SurveySync, which keeps this copy in step with it). Older
+ * copies of the database carry a slightly different column set (and
+ * "LocalArea" in capitals, or extra tables such as transmission_log), so
+ * callers ask here which tables and columns exist instead of assuming them.
  */
 final class Survey
 {
@@ -61,10 +62,10 @@ final class Survey
         return self::$columns[$table] ??= self::db()->getSchemaBuilder()->getColumnListing($table);
     }
 
-    /** The local area table: "LocalArea" in the final schema, "localarea" in older copies. */
+    /** The local area table: "localarea" as on the live server, "LocalArea" in older copies. */
     public static function localAreaTable(): ?string
     {
-        foreach (['LocalArea', 'localarea'] as $name) {
+        foreach (['localarea', 'LocalArea'] as $name) {
             if (self::has($name)) {
                 return $name;
             }
@@ -81,128 +82,139 @@ final class Survey
         SurveyExport::flush();
     }
 
+    /** f72 columns after the household and member keys, as on the live server: [column, length] (0 = text). */
+    private const F72_COLUMNS = [
+        ['no_itake', 10], ['no_itake_remarks', 0], ['mealcode', 10], ['menu', 255], ['meal_time', 20],
+        ['fooditem', 255], ['description', 255], ['fic', 50], ['foodgroup', 50], ['foodbrand', 255],
+        ['fooditemmeasure', 150], ['foodweight', 50], ['rf', 20], ['referenceday', 20], ['referencedate', 50],
+        ['interview_status', 20], ['interview_status_others', 255], ['nameMother', 255], ['memnoMother', 20],
+        ['memnoRespondent', 20], ['currentFeedingCode', 20], ['usualFeedingCode', 20], ['everEBF', 20],
+        ['durationEverEBF', 20], ['bottleFeeding', 20], ['bottle_feeding_content_breaskmilk', 20],
+        ['bottle_feeding_content_water', 20], ['bottle_feeding_milk123', 20], ['bottle_feeding_other_milk', 20],
+        ['bottle_feeding_chocolate_drinks', 20], ['bottle_feeding_caffeinated_drinks', 20],
+        ['bottle_feeding_water_with_sugar', 20], ['bottle_feeding_water_herbal_drinks', 20],
+        ['bottle_feeding_juice', 20], ['bottle_feeding_clear_broth', 20], ['bottle_feeding_am', 20],
+        ['bottle_feeding_CEREAL_DRINKS', 20], ['bottle_feeding_child_not_bottle_fed', 20],
+        ['vitaminMineralSupplement', 20], ['numberFeeding', 20], ['researcher', 100], ['remarks', 0],
+        ['time_start', 50], ['time_end', 50], ['time_interview', 50], ['booklet_remarks', 0],
+        ['sws_member_no', 50], ['supply_code', 20], ['source_code', 20], ['source_code_others', 255],
+        ['recipe_id', 255], ['cmc', 20], ['rf_others', 255], ['measurement_method', 20], ['food_model', 20],
+        ['grams_ml', 50], ['amount_proportion', 150], ['amount_length_cm', 50], ['inedible_waste', 20],
+        ['rcc', 20], ['form_eaten', 255], ['mixdish_consumed_all', 10], ['recipe_no', 20],
+    ];
+
     /**
-     * Create any of the four final-schema tables that are missing. Existing
-     * tables are left exactly as they are. Returns the names created.
+     * The survey tables as they are on the live server (see the CREATE TABLE
+     * files the tablets' endpoints write to): table => blueprint. Text columns
+     * default to '' like the live ones, but also take NULL so older data and
+     * the app's own writes fit.
+     */
+    public static function definitions(): array
+    {
+        $text = fn (Blueprint $t, string $column, int $length) => $length
+            ? $t->string($column, $length)->nullable()->default('')
+            : $t->text($column)->nullable();
+        $area = function (Blueprint $t) use ($text) {
+            foreach (['province', 'municipality', 'barangay'] as $c) {
+                $text($t, $c, 50);
+            }
+        };
+        $household = function (Blueprint $t) use ($text, $area) {
+            $area($t);
+            foreach (['identifier1', 'identifier2', 'identifier3'] as $c) {
+                $text($t, $c, 20);
+            }
+        };
+        $stamps = function (Blueprint $t) {
+            $t->dateTime('date_transmitted')->nullable()->useCurrent();
+            $t->dateTime('date_updated')->nullable()->useCurrent();
+        };
+
+        return [
+            'localarea' => function (Blueprint $t) use ($text, $area, $stamps) {
+                $t->increments('id');
+                $area($t);
+                $text($t, 'status', 20);
+                $stamps($t);
+                $t->unique(['province', 'municipality', 'barangay'], 'uq_localarea');
+                $t->index('date_updated', 'idx_localarea_updated');
+            },
+            'household_listing' => function (Blueprint $t) use ($text, $household, $stamps) {
+                $t->increments('id');
+                $household($t);
+                foreach ([['household_head', 150], ['address', 255], ['mobile_no', 30], ['foodrecall_day', 10],
+                    ['interview_status', 10], ['interview_status_others', 255], ['refuse_remarks', 255],
+                    ['status', 20], ['edited_at', 30]] as [$c, $length]) {
+                    $text($t, $c, $length);
+                }
+                $stamps($t);
+                $t->unique(self::HOUSEHOLD_KEYS, 'uq_household_listing');
+                $t->index(['province', 'municipality', 'barangay'], 'idx_hhl_area');
+                $t->index('interview_status', 'idx_hhl_status');
+                $t->index('date_updated', 'idx_hhl_updated');
+            },
+            'f11' => function (Blueprint $t) use ($text, $household, $stamps) {
+                $t->increments('id');
+                $household($t);
+                foreach ([['member_no', 20], ['sws_member_no', 20], ['member_category', 100], ['surname', 100],
+                    ['givenname', 100], ['birthdate', 30], ['age_months', 10], ['age_years', 10], ['sex', 20],
+                    ['csc', 20], ['psc', 20], ['foodrecall_day', 10], ['reference_date', 30], ['interview_status', 10],
+                    ['interview_status_others', 255], ['refuse_remarks', 255]] as [$c, $length]) {
+                    $text($t, $c, $length);
+                }
+                $stamps($t);
+                $t->unique([...self::HOUSEHOLD_KEYS, 'member_no'], 'uq_f11_member');
+                $t->index(['province', 'municipality', 'barangay'], 'idx_f11_area');
+                $t->index(['identifier1', 'identifier2', 'identifier3'], 'idx_f11_household');
+                $t->index('date_updated', 'idx_f11_updated');
+            },
+            'f72' => function (Blueprint $t) use ($text, $household, $stamps) {
+                $t->increments('id');
+                $t->integer('lane_no')->default(0);
+                $text($t, 'mixdish_id', 20);
+                $text($t, 'is_mixdish_heading', 10);
+                $household($t);
+                $text($t, 'member_no', 20);
+                $text($t, 'foodrecall_day', 5);
+                foreach (self::F72_COLUMNS as [$c, $length]) {
+                    $text($t, $c, $length);
+                }
+                $stamps($t);
+                $t->unique([...self::HOUSEHOLD_KEYS, 'member_no', 'foodrecall_day', 'lane_no'], 'uq_f72');
+                $t->index(['province', 'municipality', 'barangay'], 'idx_f72_area');
+                $t->index(self::HOUSEHOLD_KEYS, 'idx_f72_household');
+                $t->index('recipe_id', 'idx_f72_recipe');
+                $t->index('fic', 'idx_f72_fic');
+            },
+            // The tablets' interview status per member and recall day - the 24-hr recall monitoring reads it
+            'f72_interview_status' => function (Blueprint $t) use ($text, $household, $stamps) {
+                $t->increments('id');
+                $household($t);
+                foreach ([['sws_member_no', 20], ['member_no', 20], ['givenname', 100], ['surname', 100],
+                    ['mobile_no', 30], ['foodrecall_day', 5], ['interview_status', 10],
+                    ['interview_status_others', 255], ['researcher', 100]] as [$c, $length]) {
+                    $text($t, $c, $length);
+                }
+                $stamps($t);
+                $t->unique([...self::HOUSEHOLD_KEYS, 'member_no', 'foodrecall_day'], 'uq_f72_interview_status');
+                $t->index(['province', 'municipality', 'barangay'], 'idx_f72_status_area');
+                $t->index('researcher', 'idx_f72_status_researcher');
+                $t->index('date_updated', 'idx_f72_status_updated');
+            },
+        ];
+    }
+
+    /**
+     * Create any of the survey tables that are missing. Existing tables are
+     * left as they are (see rebuild() to bring one in line with the live
+     * layout). Returns the names created.
      */
     public static function install(): array
     {
         $schema = self::db()->getSchemaBuilder();
         $created = [];
 
-        $definitions = [
-            'LocalArea' => function (Blueprint $t) {
-                $t->increments('id');
-                $t->string('province', 100)->nullable();
-                $t->string('municipality', 100)->nullable();
-                $t->string('barangay', 100)->nullable();
-                $t->string('status', 50)->nullable();
-                $t->unique(['province', 'municipality', 'barangay'], 'localarea_area_unique');
-            },
-            'household_listing' => function (Blueprint $t) {
-                $t->increments('id');
-                self::householdColumns($t);
-                $t->string('household_head', 100)->nullable();
-                $t->text('address')->nullable();
-                $t->string('mobile_no', 20)->nullable();
-                $t->string('latitude', 50)->nullable();
-                $t->string('longitude', 50)->nullable();
-                $t->string('foodrecall_day', 20)->nullable();
-                $t->string('interview_status', 50)->nullable();
-                $t->text('interview_status_others')->nullable();
-                $t->string('last_intervention', 50)->nullable();
-                $t->dateTime('created_at')->nullable()->useCurrent();
-                $t->dateTime('edited_at')->nullable();
-                $t->string('status', 50)->nullable();
-                $t->text('refuse_remarks')->nullable();
-                $t->string('household_id', 50)->nullable();
-                $t->unique(self::HOUSEHOLD_KEYS, 'household_listing_household_unique');
-            },
-            'f11' => function (Blueprint $t) {
-                $t->increments('id');
-                self::householdColumns($t);
-                $t->string('sws_member_no', 50)->nullable();
-                $t->string('member_category', 50)->nullable();
-                $t->string('member_no', 50);
-                $t->string('surname', 100)->nullable();
-                $t->string('givenname', 100)->nullable();
-                $t->string('birthdate', 10)->nullable();
-                $t->integer('age_months')->nullable();
-                $t->integer('age_years')->nullable();
-                $t->string('sex', 10)->nullable();
-                $t->string('csc', 50)->nullable();
-                $t->string('psc', 50)->nullable();
-                $t->string('foodrecall_day', 20)->nullable();
-                $t->string('reference_date', 50)->nullable();
-                $t->string('interview_status', 50)->nullable();
-                $t->text('interview_status_others')->nullable();
-                $t->text('refuse_remarks')->nullable();
-                $t->unique([...self::HOUSEHOLD_KEYS, 'member_no'], 'f11_member_unique');
-            },
-            'f72' => function (Blueprint $t) {
-                $t->increments('id');
-                $t->integer('lane_no')->nullable();
-                $t->string('mixdish_id', 50)->nullable();
-                $t->string('is_mixdish_heading', 10)->nullable();
-                self::householdColumns($t);
-                $t->string('member_no', 50)->nullable();
-                $t->string('foodrecall_day', 20)->nullable();
-                $t->string('no_itake', 10)->nullable();
-                $t->text('no_itake_remarks')->nullable();
-                $t->string('mealcode', 50)->nullable();
-                $t->text('menu')->nullable();
-                $t->string('meal_time', 50)->nullable();
-                $t->text('fooditem')->nullable();
-                $t->text('description')->nullable();
-                foreach (['fic', 'foodgroup'] as $c) {
-                    $t->string($c, 50)->nullable();
-                }
-                $t->string('foodbrand', 100)->nullable();
-                foreach (['fooditemmeasure', 'foodweight'] as $c) {
-                    $t->string($c, 50)->nullable();
-                }
-                foreach (['rf', 'referenceday', 'interview_status'] as $c) {
-                    $t->string($c, 20)->nullable();
-                }
-                $t->string('referencedate', 20)->nullable();
-                $t->text('interview_status_others')->nullable();
-                $t->string('nameMother', 100)->nullable();
-                foreach (['memnoMother', 'memnoRespondent'] as $c) {
-                    $t->string($c, 50)->nullable();
-                }
-                foreach ([
-                    'currentFeedingCode', 'usualFeedingCode', 'everEBF', 'durationEverEBF', 'bottleFeeding',
-                    'bottle_feeding_content_breaskmilk', 'bottle_feeding_content_water', 'bottle_feeding_milk123',
-                    'bottle_feeding_other_milk', 'bottle_feeding_chocolate_drinks', 'bottle_feeding_caffeinated_drinks',
-                    'bottle_feeding_water_with_sugar', 'bottle_feeding_water_herbal_drinks', 'bottle_feeding_juice',
-                    'bottle_feeding_clear_broth', 'bottle_feeding_am', 'bottle_feeding_CEREAL_DRINKS',
-                    'bottle_feeding_child_not_bottle_fed', 'vitaminMineralSupplement', 'numberFeeding',
-                ] as $c) {
-                    $t->string($c, 10)->nullable();
-                }
-                $t->string('researcher', 100)->nullable();
-                $t->text('remarks')->nullable();
-                $t->dateTime('created_at')->nullable()->useCurrent();
-                $t->dateTime('edited_at')->nullable()->useCurrent();
-                $t->dateTime('time_start')->nullable();
-                $t->dateTime('time_end')->nullable();
-                $t->string('time_interview', 50)->nullable();
-                $t->text('booklet_remarks')->nullable();
-                foreach (['sws_member_no', 'supply_code', 'weight_method'] as $c) {
-                    $t->string($c, 50)->nullable();
-                }
-                $t->text('weight_method_others')->nullable();
-                $t->string('source_code', 50)->nullable();
-                $t->text('source_code_others')->nullable();
-                foreach ([
-                    'recipe_id', 'cmc', 'rf_others', 'recipe_no', 'measurement_method', 'food_model', 'grams_ml',
-                    'amount_proportion', 'amount_length_cm', 'inedible_waste', 'rcc',
-                ] as $c) {
-                    $t->string($c, 100)->nullable();
-                }
-                $t->unique([...self::HOUSEHOLD_KEYS, 'member_no', 'foodrecall_day', 'lane_no'], 'f72_line_unique');
-                $t->index('recipe_id', 'idx_f72_recipe_key');
-            },
+        $definitions = self::definitions() + [
             // SWS transmission data: one row per SWS respondent, columns named
             // after the SWS template's headers (see SwsRecord::COLUMNS), plus
             // whether each record has been transmitted to the live server
@@ -213,8 +225,8 @@ final class Survey
         ];
 
         foreach ($definitions as $table => $definition) {
-            // The local area table may already exist under its older lower-case name
-            $exists = $table === 'LocalArea' ? self::localAreaTable() !== null : $schema->hasTable($table);
+            // The local area table may already exist under its older name, "LocalArea"
+            $exists = $table === 'localarea' ? self::localAreaTable() !== null : $schema->hasTable($table);
 
             if (!$exists) {
                 $schema->create($table, $definition);
@@ -234,6 +246,67 @@ final class Survey
         self::flush();
 
         return $created;
+    }
+
+    /**
+     * Whether a survey table's columns differ from the live layout
+     * (definitions()) - extra, missing or renamed columns.
+     */
+    public static function differs(string $table): bool
+    {
+        $name = $table === 'localarea' ? self::localAreaTable() : $table;
+        if ($name === null || !self::has($name)) {
+            return false;
+        }
+
+        return array_map('strtolower', self::columns($name)) !== array_map('strtolower', self::layoutColumns($table));
+    }
+
+    /**
+     * Bring an existing survey table to the live layout, keeping its rows: a
+     * new table is made from definitions(), the columns both share are copied
+     * across (by id), and it takes the old one's place. Rows that would break
+     * the new unique key are skipped. Returns [rows copied, rows before].
+     */
+    public static function rebuild(string $table): array
+    {
+        $db = self::db();
+        $schema = $db->getSchemaBuilder();
+        $current = $table === 'localarea' ? self::localAreaTable() : $table;
+        $old = $table . '_before_rebuild';
+
+        // Move the old table aside and free its index names (SQLite keeps them database-wide)
+        $schema->dropIfExists($old);
+        $schema->rename($current, $old);
+        foreach ($schema->getIndexes($old) as $index) {
+            if (!$index['primary']) {
+                $schema->table($old, fn (Blueprint $t) => $index['unique'] ? $t->dropUnique($index['name']) : $t->dropIndex($index['name']));
+            }
+        }
+        self::flush();
+
+        $schema->create($table, self::definitions()[$table]);
+
+        $shared = array_values(array_intersect(self::columns($old), $schema->getColumnListing($table)));
+        $before = $db->table($old)->count();
+        $copied = 0;
+        $db->table($old)->orderBy('id')->chunk(500, function ($rows) use ($db, $table, $shared, &$copied) {
+            $copied += $db->table($table)->insertOrIgnore($rows->map(fn ($r) => array_intersect_key((array) $r, array_flip($shared)))->all());
+        });
+
+        $schema->drop($old);
+        self::flush();
+
+        return [$copied, $before];
+    }
+
+    /** The column names definitions() gives a table, in order. */
+    public static function layoutColumns(string $table): array
+    {
+        $blueprint = new Blueprint(self::db(), $table);
+        self::definitions()[$table]($blueprint);
+
+        return array_map(fn ($c) => $c->name, $blueprint->getColumns());
     }
 
     /**
@@ -322,10 +395,15 @@ final class Survey
         $t->dateTime('transmitted_at')->nullable();
     }
 
-    private static function householdColumns(Blueprint $t): void
+    /** The f72 column holding how a food was weighed: measurement_method on the live layout, weight_method in older copies. */
+    public static function weightColumn(): ?string
     {
-        foreach (self::HOUSEHOLD_KEYS as $column) {
-            $t->string($column, 100)->nullable();
+        foreach (['measurement_method', 'weight_method'] as $column) {
+            if (self::has('f72') && in_array($column, self::columns('f72'), true)) {
+                return $column;
+            }
         }
+
+        return null;
     }
 }

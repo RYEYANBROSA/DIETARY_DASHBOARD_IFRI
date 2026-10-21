@@ -152,3 +152,42 @@ Artisan::command('sws:live-key {--apply : Change the live server}', function () 
 
     return \App\Support\SwsStore::liveKeyReady() ? 0 : 1;
 })->purpose("Key the live server's sws_data on identifiers 1-3 + SWS member no.");
+
+/*
+ * Add the live server's new survey rows (the tablets' database) to the local
+ * tables - see App\Support\SurveySync. Only reads the live server, and only
+ * adds: rows already here are never updated or removed.
+ *   php artisan survey:sync        every table
+ *   php artisan survey:sync f72    one table
+ * Scheduled every 10 minutes below (as "auto"); the server needs the Laravel
+ * scheduler running: `php artisan schedule:run` every minute from cron or
+ * Windows Task Scheduler, or `php artisan schedule:work` left running.
+ */
+Artisan::command('survey:sync {table? : One of localarea, household_listing, f11, f72, f72_interview_status} {--auto : Log the run as the scheduled auto-fetch}', function (?string $table = null) {
+    $tables = $table === null ? array_keys(\App\Support\SurveySync::TABLES) : [$table];
+    if ($table !== null && !isset(\App\Support\SurveySync::TABLES[$table])) {
+        $this->error('Unknown table. Use one of: ' . implode(', ', array_keys(\App\Support\SurveySync::TABLES)));
+
+        return 1;
+    }
+
+    $failed = 0;
+    foreach ($tables as $name) {
+        $run = \App\Support\SurveySync::fetch($name, null, $this->option('auto') ? 'auto' : 'manual');
+        if ($run->status === 'ok') {
+            $this->info(sprintf('%-22s %s new rows added, %s kept (deleted on live) - %s live / %s local (%.1fs)', $name, number_format($run->fetched), number_format($run->retained), number_format((int) $run->live_count), number_format((int) $run->local_count), $run->duration_ms / 1000));
+        } else {
+            $failed++;
+            $this->error(sprintf('%-22s failed: %s', $name, $run->message));
+            if (!\App\Support\SurveySync::reachable()) {
+                break;
+            }
+        }
+    }
+
+    return $failed ? 1 : 0;
+})->purpose("Add the live server's new survey rows to the local tables (add only)");
+
+\Illuminate\Support\Facades\Schedule::command('survey:sync --auto')
+    ->cron('*/' . \App\Support\SurveySync::AUTO_MINUTES . ' * * * *')
+    ->withoutOverlapping(15);
